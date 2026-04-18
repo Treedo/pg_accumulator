@@ -15,9 +15,9 @@ DECLARE
     dim_type text;
     result   text := '';
 BEGIN
-    FOR dim_key, dim_type IN SELECT * FROM jsonb_each_text(p_dimensions)
+    FOR dim_key, dim_type IN SELECT key, value FROM jsonb_each_text(p_dimensions) ORDER BY key
     LOOP
-        result := result || format(', %I %s', dim_key, dim_type);
+        result := result || format(', %I %s NOT NULL', dim_key, dim_type);
     END LOOP;
     RETURN result;
 END;
@@ -31,7 +31,7 @@ DECLARE
     res_type text;
     result   text := '';
 BEGIN
-    FOR res_key, res_type IN SELECT * FROM jsonb_each_text(p_resources)
+    FOR res_key, res_type IN SELECT key, value FROM jsonb_each_text(p_resources) ORDER BY key
     LOOP
         result := result || format(', %I %s NOT NULL DEFAULT 0', res_key, res_type);
     END LOOP;
@@ -141,7 +141,7 @@ BEGIN
             last_movement_at timestamptz     NOT NULL DEFAULT now(),
             last_movement_id uuid,
             version          bigint          NOT NULL DEFAULT 0
-        )',
+        ) WITH (fillfactor = 70)',
         p_name || '_balance_cache',
         col_defs,
         res_defs
@@ -185,14 +185,22 @@ BEGIN
     EXECUTE format('CREATE INDEX ON accum.%I (dim_hash, period)', p_name || '_movements');
     EXECUTE format('CREATE INDEX ON accum.%I (recorder)', p_name || '_movements');
     EXECUTE format('CREATE INDEX ON accum.%I (period)', p_name || '_movements');
+    EXECUTE format('CREATE INDEX ON accum.%I (movement_type) WHERE movement_type != ''regular''', p_name || '_movements');
 
     IF p_kind = 'balance' THEN
-        FOR dim_key IN SELECT * FROM jsonb_object_keys(p_dimensions)
+        FOR dim_key IN SELECT key FROM jsonb_each_text(p_dimensions) ORDER BY key
         LOOP
             EXECUTE format('CREATE INDEX ON accum.%I (%I)',
                 p_name || '_balance_cache', dim_key);
         END LOOP;
     END IF;
+
+    -- Dimension indexes on totals tables for dimension-based queries
+    FOR dim_key IN SELECT key FROM jsonb_each_text(p_dimensions) ORDER BY key
+    LOOP
+        EXECUTE format('CREATE INDEX ON accum.%I (%I)', p_name || '_totals_month', dim_key);
+        EXECUTE format('CREATE INDEX ON accum.%I (%I)', p_name || '_totals_year', dim_key);
+    END LOOP;
 
     IF p_high_write THEN
         EXECUTE format('CREATE INDEX ON accum.%I (dim_hash)', p_name || '_balance_cache_delta');
@@ -235,10 +243,9 @@ DECLARE
     dim_key          text;
     res_key          text;
     hash_call_args   text := '';
-    dim_insert_cols  text := '';
-    dim_new_cols     text := '';
-    res_insert_cols  text := '';
-    res_new_cols     text := '';
+    dim_cols         text := '';
+    res_cols         text := '';
+    res_sum_cols     text := '';
     res_update_m     text := '';
     res_update_y     text := '';
     res_update_c     text := '';
@@ -251,53 +258,52 @@ DECLARE
     del_totals_m     text;
     del_totals_y     text;
     del_cache        text := '';
-    trg_body         text;
+    trg_body_insert  text;
     first_dim        boolean := true;
     first_res        boolean := true;
 BEGIN
-    FOR dim_key IN SELECT * FROM jsonb_object_keys(p_dimensions)
+    -- Build dimension column lists (ORDER BY key for determinism)
+    FOR dim_key IN SELECT key FROM jsonb_each_text(p_dimensions) ORDER BY key
     LOOP
         IF NOT first_dim THEN
-            hash_call_args  := hash_call_args  || ', ';
-            dim_insert_cols := dim_insert_cols || ', ';
-            dim_new_cols    := dim_new_cols    || ', ';
+            hash_call_args := hash_call_args || ', ';
+            dim_cols       := dim_cols       || ', ';
         END IF;
-        hash_call_args  := hash_call_args  || format('NEW.%I', dim_key);
-        dim_insert_cols := dim_insert_cols || format('%I', dim_key);
-        dim_new_cols    := dim_new_cols    || format('NEW.%I', dim_key);
+        hash_call_args := hash_call_args || format('NEW.%I', dim_key);
+        dim_cols       := dim_cols       || format('%I', dim_key);
         first_dim := false;
     END LOOP;
 
-    FOR res_key IN SELECT * FROM jsonb_object_keys(p_resources)
+    -- Build resource column lists (ORDER BY key for determinism)
+    FOR res_key IN SELECT key FROM jsonb_each_text(p_resources) ORDER BY key
     LOOP
         IF NOT first_res THEN
-            res_insert_cols := res_insert_cols || ', ';
-            res_new_cols    := res_new_cols    || ', ';
-            res_update_m    := res_update_m   || ', ';
-            res_update_y    := res_update_y   || ', ';
-            res_update_c    := res_update_c   || ', ';
-            res_sub_m       := res_sub_m      || ', ';
-            res_sub_y       := res_sub_y      || ', ';
-            res_sub_c       := res_sub_c      || ', ';
+            res_cols     := res_cols     || ', ';
+            res_sum_cols := res_sum_cols || ', ';
+            res_update_m := res_update_m || ', ';
+            res_update_y := res_update_y || ', ';
+            res_update_c := res_update_c || ', ';
+            res_sub_m    := res_sub_m    || ', ';
+            res_sub_y    := res_sub_y    || ', ';
+            res_sub_c    := res_sub_c    || ', ';
         END IF;
-        res_insert_cols := res_insert_cols || format('%I', res_key);
-        res_new_cols    := res_new_cols    || format('NEW.%I', res_key);
+        res_cols     := res_cols     || format('%I', res_key);
+        res_sum_cols := res_sum_cols || format('SUM(%I) AS %I', res_key, res_key);
         res_update_m := res_update_m || format('%I = accum.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_totals_month', res_key, res_key);
         res_update_y := res_update_y || format('%I = accum.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_totals_year', res_key, res_key);
         res_update_c := res_update_c || format('%I = accum.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_balance_cache', res_key, res_key);
-        res_sub_m := res_sub_m || format('%I = accum.%I.%I - OLD.%I',
-            res_key, p_name || '_totals_month', res_key, res_key);
-        res_sub_y := res_sub_y || format('%I = accum.%I.%I - OLD.%I',
-            res_key, p_name || '_totals_year', res_key, res_key);
-        res_sub_c := res_sub_c || format('%I = accum.%I.%I - OLD.%I',
-            res_key, p_name || '_balance_cache', res_key, res_key);
+        res_sub_m    := res_sub_m || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
+        res_sub_y    := res_sub_y || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
+        res_sub_c    := res_sub_c || format('%I = c.%I - agg.%I', res_key, res_key, res_key);
         first_res := false;
     END LOOP;
 
-    -- BEFORE INSERT trigger
+    -- ============================================================
+    -- BEFORE INSERT trigger (FOR EACH ROW — modifies NEW)
+    -- ============================================================
     EXECUTE format(
         'CREATE OR REPLACE FUNCTION accum.%I() RETURNS trigger
          LANGUAGE plpgsql AS $trg$
@@ -323,24 +329,32 @@ BEGIN
         '_trg_' || p_name || '_before_insert'
     );
 
-    -- AFTER INSERT trigger
+    -- ============================================================
+    -- AFTER INSERT trigger (FOR EACH STATEMENT — batch aggregation)
+    -- ============================================================
     totals_upsert_m := format(
         'INSERT INTO accum.%I (dim_hash, period, %s, %s)
-         VALUES (NEW.dim_hash, date_trunc(''month'', NEW.period)::date, %s, %s)
+         SELECT dim_hash, date_trunc(''month'', period)::date, %s, %s
+         FROM new_rows
+         GROUP BY dim_hash, date_trunc(''month'', period)::date, %s
          ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
         p_name || '_totals_month',
-        dim_insert_cols, res_insert_cols,
-        dim_new_cols, res_new_cols,
+        dim_cols, res_cols,
+        dim_cols, res_sum_cols,
+        dim_cols,
         res_update_m
     );
 
     totals_upsert_y := format(
         'INSERT INTO accum.%I (dim_hash, period, %s, %s)
-         VALUES (NEW.dim_hash, date_trunc(''year'', NEW.period)::date, %s, %s)
+         SELECT dim_hash, date_trunc(''year'', period)::date, %s, %s
+         FROM new_rows
+         GROUP BY dim_hash, date_trunc(''year'', period)::date, %s
          ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
         p_name || '_totals_year',
-        dim_insert_cols, res_insert_cols,
-        dim_new_cols, res_new_cols,
+        dim_cols, res_cols,
+        dim_cols, res_sum_cols,
+        dim_cols,
         res_update_y
     );
 
@@ -348,31 +362,36 @@ BEGIN
         IF NOT p_high_write THEN
             cache_upsert := format(
                 'INSERT INTO accum.%I (dim_hash, %s, %s, last_movement_at, last_movement_id, version)
-                 VALUES (NEW.dim_hash, %s, %s, now(), NEW.id, 1)
+                 SELECT dim_hash, %s, %s, now(), (array_agg(id))[1], 1
+                 FROM new_rows
+                 GROUP BY dim_hash, %s
                  ON CONFLICT (dim_hash) DO UPDATE SET %s,
                      last_movement_at = EXCLUDED.last_movement_at,
                      last_movement_id = EXCLUDED.last_movement_id,
                      version = accum.%I.version + 1',
                 p_name || '_balance_cache',
-                dim_insert_cols, res_insert_cols,
-                dim_new_cols, res_new_cols,
+                dim_cols, res_cols,
+                dim_cols, res_sum_cols,
+                dim_cols,
                 res_update_c,
                 p_name || '_balance_cache'
             );
         ELSE
+            -- Delta buffer: insert individual rows (no aggregation)
             cache_upsert := format(
                 'INSERT INTO accum.%I (dim_hash, %s)
-                 VALUES (NEW.dim_hash, %s)',
+                 SELECT dim_hash, %s
+                 FROM new_rows',
                 p_name || '_balance_cache_delta',
-                res_insert_cols,
-                res_new_cols
+                res_cols,
+                res_cols
             );
         END IF;
     END IF;
 
-    trg_body := totals_upsert_m || '; ' || totals_upsert_y || ';';
+    trg_body_insert := totals_upsert_m || '; ' || totals_upsert_y || ';';
     IF cache_upsert != '' THEN
-        trg_body := trg_body || ' ' || cache_upsert || ';';
+        trg_body_insert := trg_body_insert || ' ' || cache_upsert || ';';
     END IF;
 
     EXECUTE format(
@@ -380,35 +399,46 @@ BEGIN
          LANGUAGE plpgsql AS $trg$
          BEGIN
              %s
-             RETURN NEW;
+             RETURN NULL;
          END;
          $trg$',
         '_trg_' || p_name || '_after_insert',
-        trg_body
+        trg_body_insert
     );
 
     EXECUTE format(
         'CREATE TRIGGER trg_%s_after_insert
          AFTER INSERT ON accum.%I
-         FOR EACH ROW EXECUTE FUNCTION accum.%I()',
+         REFERENCING NEW TABLE AS new_rows
+         FOR EACH STATEMENT EXECUTE FUNCTION accum.%I()',
         p_name,
         p_name || '_movements',
         '_trg_' || p_name || '_after_insert'
     );
 
-    -- AFTER DELETE trigger
+    -- ============================================================
+    -- AFTER DELETE trigger (FOR EACH STATEMENT — batch aggregation)
+    -- ============================================================
     del_totals_m := format(
-        'UPDATE accum.%I SET %s WHERE dim_hash = OLD.dim_hash AND period = date_trunc(''month'', OLD.period)::date',
-        p_name || '_totals_month', res_sub_m);
+        'UPDATE accum.%I t SET %s
+         FROM (SELECT dim_hash, date_trunc(''month'', period)::date AS period, %s
+               FROM old_rows GROUP BY dim_hash, date_trunc(''month'', period)::date) agg
+         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+        p_name || '_totals_month', res_sub_m, res_sum_cols);
 
     del_totals_y := format(
-        'UPDATE accum.%I SET %s WHERE dim_hash = OLD.dim_hash AND period = date_trunc(''year'', OLD.period)::date',
-        p_name || '_totals_year', res_sub_y);
+        'UPDATE accum.%I t SET %s
+         FROM (SELECT dim_hash, date_trunc(''year'', period)::date AS period, %s
+               FROM old_rows GROUP BY dim_hash, date_trunc(''year'', period)::date) agg
+         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+        p_name || '_totals_year', res_sub_y, res_sum_cols);
 
     IF p_kind = 'balance' THEN
         del_cache := format(
-            'UPDATE accum.%I SET %s, version = accum.%I.version + 1 WHERE dim_hash = OLD.dim_hash',
-            p_name || '_balance_cache', res_sub_c, p_name || '_balance_cache');
+            'UPDATE accum.%I c SET %s, version = c.version + 1
+             FROM (SELECT dim_hash, %s FROM old_rows GROUP BY dim_hash) agg
+             WHERE c.dim_hash = agg.dim_hash',
+            p_name || '_balance_cache', res_sub_c, res_sum_cols);
     END IF;
 
     EXECUTE format(
@@ -418,7 +448,7 @@ BEGIN
              %s;
              %s;
              %s
-             RETURN OLD;
+             RETURN NULL;
          END;
          $trg$',
         '_trg_' || p_name || '_after_delete',
@@ -430,7 +460,8 @@ BEGIN
     EXECUTE format(
         'CREATE TRIGGER trg_%s_after_delete
          AFTER DELETE ON accum.%I
-         FOR EACH ROW EXECUTE FUNCTION accum.%I()',
+         REFERENCING OLD TABLE AS old_rows
+         FOR EACH STATEMENT EXECUTE FUNCTION accum.%I()',
         p_name,
         p_name || '_movements',
         '_trg_' || p_name || '_after_delete'
@@ -477,26 +508,28 @@ BEGIN
     PERFORM accum._register_put(name, kind, dimensions, resources,
         totals_period, partition_by, high_write, recorder_type);
 
-    -- DDL: tables
-    PERFORM accum._ddl_create_movements_table(name, recorder_type, dimensions, resources);
-    PERFORM accum._ddl_create_totals_tables(name, dimensions, resources);
+    -- DDL: tables, indexes, hash, triggers — with cleanup on failure
+    BEGIN
+        PERFORM accum._ddl_create_movements_table(name, recorder_type, dimensions, resources);
+        PERFORM accum._ddl_create_totals_tables(name, dimensions, resources);
 
-    IF kind = 'balance' THEN
-        PERFORM accum._ddl_create_balance_cache(name, dimensions, resources);
-    END IF;
+        IF kind = 'balance' THEN
+            PERFORM accum._ddl_create_balance_cache(name, dimensions, resources);
+        END IF;
 
-    IF high_write THEN
-        PERFORM accum._ddl_create_delta_buffer(name, resources);
-    END IF;
+        IF high_write THEN
+            PERFORM accum._ddl_create_delta_buffer(name, resources);
+        END IF;
 
-    -- DDL: indexes
-    PERFORM accum._ddl_create_indexes(name, kind, dimensions, high_write);
-
-    -- Hash function
-    PERFORM accum._generate_hash_function(name, dimensions);
-
-    -- Triggers
-    PERFORM accum._generate_triggers(name, kind, dimensions, resources, high_write);
+        PERFORM accum._ddl_create_indexes(name, kind, dimensions, high_write);
+        PERFORM accum._generate_hash_function(name, dimensions);
+        PERFORM accum._generate_triggers(name, kind, dimensions, resources, high_write);
+    EXCEPTION WHEN OTHERS THEN
+        -- Cleanup partially created objects on failure
+        PERFORM accum._ddl_drop_infrastructure(name);
+        PERFORM accum._register_delete(name);
+        RAISE;
+    END;
 END;
 $$;
 
@@ -577,7 +610,7 @@ $$;
 
 
 -- ============================================================
--- REGISTER_POST: Post movements to a register
+-- REGISTER_POST: Post movements to a register (batch INSERT)
 -- ============================================================
 CREATE OR REPLACE FUNCTION accum.register_post(
     p_register text,
@@ -592,11 +625,10 @@ DECLARE
     dim_type     text;
     res_key      text;
     res_type     text;
-    col_names    text := '';
-    col_values   text := '';
-    sql_stmt     text;
+    col_list     text := 'recorder, period';
+    tuple        text;
+    values_str   text := '';
     total_count  int := 0;
-    first        boolean;
 BEGIN
     SELECT * INTO reg FROM accum._registers r WHERE r.name = p_register;
     IF NOT FOUND THEN
@@ -611,6 +643,18 @@ BEGIN
         RAISE EXCEPTION 'Data must be a JSON object or array';
     END IF;
 
+    -- Build column list once from register metadata
+    FOR dim_key IN SELECT key FROM jsonb_each_text(reg.dimensions) ORDER BY key
+    LOOP
+        col_list := col_list || ', ' || quote_ident(dim_key);
+    END LOOP;
+
+    FOR res_key IN SELECT key FROM jsonb_each_text(reg.resources) ORDER BY key
+    LOOP
+        col_list := col_list || ', ' || quote_ident(res_key);
+    END LOOP;
+
+    -- Build VALUES tuples for batch INSERT
     FOR mov IN SELECT * FROM jsonb_array_elements(movements)
     LOOP
         IF mov->>'recorder' IS NULL THEN
@@ -620,34 +664,33 @@ BEGIN
             RAISE EXCEPTION 'period is required';
         END IF;
 
-        first := true;
-        col_names := 'recorder, period';
-        col_values := format('%L, %L::timestamptz', mov->>'recorder', mov->>'period');
+        tuple := format('%L, %L::timestamptz', mov->>'recorder', mov->>'period');
 
-        FOR dim_key, dim_type IN SELECT * FROM jsonb_each_text(reg.dimensions)
+        FOR dim_key, dim_type IN SELECT key, value FROM jsonb_each_text(reg.dimensions) ORDER BY key
         LOOP
             IF mov->>dim_key IS NULL THEN
                 RAISE EXCEPTION 'dimension "%" is required', dim_key;
             END IF;
-            col_names := col_names || ', ' || quote_ident(dim_key);
-            col_values := col_values || ', ' || format('%L::%s', mov->>dim_key, dim_type);
+            tuple := tuple || ', ' || format('%L::%s', mov->>dim_key, dim_type);
         END LOOP;
 
-        FOR res_key, res_type IN SELECT * FROM jsonb_each_text(reg.resources)
+        FOR res_key, res_type IN SELECT key, value FROM jsonb_each_text(reg.resources) ORDER BY key
         LOOP
-            col_names := col_names || ', ' || quote_ident(res_key);
-            col_values := col_values || ', ' || format('coalesce(%L, ''0'')::%s', mov->>res_key, res_type);
+            tuple := tuple || ', ' || format('coalesce(%L, ''0'')::%s', mov->>res_key, res_type);
         END LOOP;
 
-        sql_stmt := format(
-            'INSERT INTO accum.%I (%s) VALUES (%s)',
-            p_register || '_movements',
-            col_names,
-            col_values
-        );
-        EXECUTE sql_stmt;
+        IF values_str != '' THEN
+            values_str := values_str || ', ';
+        END IF;
+        values_str := values_str || '(' || tuple || ')';
         total_count := total_count + 1;
     END LOOP;
+
+    -- Single batch INSERT — triggers fire once per statement
+    IF total_count > 0 THEN
+        EXECUTE format('INSERT INTO accum.%I (%s) VALUES %s',
+            p_register || '_movements', col_list, values_str);
+    END IF;
 
     RETURN total_count;
 END;
@@ -712,182 +755,3 @@ END;
 $$;
 
 
--- ============================================================
--- REGISTER_INFO: Detailed register info
--- ============================================================
-CREATE OR REPLACE FUNCTION accum.register_info(p_name text)
-RETURNS jsonb
-LANGUAGE plpgsql STABLE AS $$
-DECLARE
-    reg record;
-    result jsonb;
-BEGIN
-    SELECT * INTO reg FROM accum._registers r WHERE r.name = p_name;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Register "%" does not exist', p_name;
-    END IF;
-
-    result := jsonb_build_object(
-        'name',          reg.name,
-        'kind',          reg.kind,
-        'dimensions',    reg.dimensions,
-        'resources',     reg.resources,
-        'totals_period', reg.totals_period,
-        'partition_by',  reg.partition_by,
-        'high_write',    reg.high_write,
-        'recorder_type', reg.recorder_type,
-        'created_at',    reg.created_at
-    );
-
-    RETURN result;
-END;
-$$;
-
-
--- ============================================================
--- REGISTER_POST: Post movements to a register
--- ============================================================
-CREATE OR REPLACE FUNCTION accum.register_post(
-    p_register text,
-    p_data     jsonb
-) RETURNS int
-LANGUAGE plpgsql AS $$
-DECLARE
-    reg          record;
-    movements    jsonb;
-    mov          jsonb;
-    dim_key      text;
-    dim_type     text;
-    res_key      text;
-    res_type     text;
-    col_names    text := '';
-    col_values   text := '';
-    sql_stmt     text;
-    total_count  int := 0;
-    first        boolean;
-BEGIN
-    -- Get register metadata
-    SELECT * INTO reg FROM accum._registers r WHERE r.name = p_register;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Register "%" does not exist', p_register;
-    END IF;
-
-    -- Normalize to array
-    IF jsonb_typeof(p_data) = 'object' THEN
-        movements := jsonb_build_array(p_data);
-    ELSIF jsonb_typeof(p_data) = 'array' THEN
-        movements := p_data;
-    ELSE
-        RAISE EXCEPTION 'Data must be a JSON object or array';
-    END IF;
-
-    -- Process each movement
-    FOR mov IN SELECT * FROM jsonb_array_elements(movements)
-    LOOP
-        -- Validate recorder
-        IF mov->>'recorder' IS NULL THEN
-            RAISE EXCEPTION 'recorder is required';
-        END IF;
-
-        -- Validate period
-        IF mov->>'period' IS NULL THEN
-            RAISE EXCEPTION 'period is required';
-        END IF;
-
-        -- Build INSERT
-        first := true;
-        col_names := 'recorder, period';
-        col_values := format('%L, %L::timestamptz', mov->>'recorder', mov->>'period');
-
-        -- Add dimensions
-        FOR dim_key, dim_type IN SELECT * FROM jsonb_each_text(reg.dimensions)
-        LOOP
-            IF mov->>dim_key IS NULL THEN
-                RAISE EXCEPTION 'dimension "%" is required', dim_key;
-            END IF;
-            col_names := col_names || ', ' || quote_ident(dim_key);
-            col_values := col_values || ', ' || format('%L::%s', mov->>dim_key, dim_type);
-        END LOOP;
-
-        -- Add resources
-        FOR res_key, res_type IN SELECT * FROM jsonb_each_text(reg.resources)
-        LOOP
-            col_names := col_names || ', ' || quote_ident(res_key);
-            col_values := col_values || ', ' || format('coalesce(%L, ''0'')::%s', mov->>res_key, res_type);
-        END LOOP;
-
-        -- Execute INSERT
-        sql_stmt := format(
-            'INSERT INTO accum.%I (%s) VALUES (%s)',
-            p_register || '_movements',
-            col_names,
-            col_values
-        );
-        EXECUTE sql_stmt;
-        total_count := total_count + 1;
-    END LOOP;
-
-    RETURN total_count;
-END;
-$$;
-
-
--- ============================================================
--- REGISTER_UNPOST: Cancel all movements by recorder
--- ============================================================
-CREATE OR REPLACE FUNCTION accum.register_unpost(
-    p_register text,
-    p_recorder text
-) RETURNS int
-LANGUAGE plpgsql AS $$
-DECLARE
-    reg   record;
-    cnt   int;
-BEGIN
-    SELECT * INTO reg FROM accum._registers r WHERE r.name = p_register;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Register "%" does not exist', p_register;
-    END IF;
-
-    EXECUTE format(
-        'WITH deleted AS (
-            DELETE FROM accum.%I WHERE recorder = %L RETURNING 1
-        ) SELECT count(*) FROM deleted',
-        p_register || '_movements',
-        p_recorder
-    ) INTO cnt;
-
-    RETURN cnt;
-END;
-$$;
-
-
--- ============================================================
--- REGISTER_REPOST: Atomic re-post (unpost + post)
--- ============================================================
-CREATE OR REPLACE FUNCTION accum.register_repost(
-    p_register text,
-    p_recorder text,
-    p_data     jsonb
-) RETURNS int
-LANGUAGE plpgsql AS $$
-DECLARE
-    cnt int;
-BEGIN
-    -- Unpost old movements
-    PERFORM accum.register_unpost(p_register, p_recorder);
-
-    -- Add recorder to each movement in data
-    IF jsonb_typeof(p_data) = 'object' THEN
-        p_data := jsonb_set(p_data, '{recorder}', to_jsonb(p_recorder));
-    ELSIF jsonb_typeof(p_data) = 'array' THEN
-        SELECT jsonb_agg(jsonb_set(elem, '{recorder}', to_jsonb(p_recorder)))
-        INTO p_data
-        FROM jsonb_array_elements(p_data) AS elem;
-    END IF;
-
-    -- Post new movements
-    cnt := accum.register_post(p_register, p_data);
-    RETURN cnt;
-END;
-$$;

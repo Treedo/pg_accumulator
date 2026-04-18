@@ -41,6 +41,29 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION accum._validate_pg_type(p_type text)
+RETURNS void
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+    base_type text;
+BEGIN
+    -- Extract base type name (strip precision like "numeric(18,2)")
+    base_type := lower(trim(regexp_replace(p_type, '\(.*\)', '')));
+    IF base_type NOT IN (
+        'int', 'int2', 'int4', 'int8', 'integer', 'smallint', 'bigint',
+        'numeric', 'decimal', 'real', 'float', 'float4', 'float8',
+        'double precision', 'money',
+        'text', 'varchar', 'char', 'character varying', 'character',
+        'boolean', 'bool',
+        'date', 'timestamp', 'timestamptz', 'time', 'timetz',
+        'interval',
+        'uuid', 'jsonb', 'json'
+    ) THEN
+        RAISE EXCEPTION 'Unsupported PostgreSQL type: "%". Use standard types like int, text, numeric, etc.', p_type;
+    END IF;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION accum._validate_dimensions(p_dimensions jsonb)
 RETURNS void
 LANGUAGE plpgsql IMMUTABLE AS $$
@@ -62,6 +85,8 @@ BEGIN
         IF dim_type IS NULL OR dim_type = '' THEN
             RAISE EXCEPTION 'Dimension "%" must have a type', dim_key;
         END IF;
+        -- Validate type against whitelist to prevent SQL injection
+        PERFORM accum._validate_pg_type(dim_type);
     END LOOP;
 END;
 $$;
@@ -72,6 +97,7 @@ LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE
     res_key  text;
     res_type text;
+    base_type text;
 BEGIN
     IF p_resources IS NULL OR p_resources = '{}'::jsonb THEN
         RAISE EXCEPTION 'At least one resource is required';
@@ -86,6 +112,17 @@ BEGIN
         END IF;
         IF res_type IS NULL OR res_type = '' THEN
             RAISE EXCEPTION 'Resource "%" must have a type', res_key;
+        END IF;
+        -- Validate type against whitelist
+        PERFORM accum._validate_pg_type(res_type);
+        -- Resources must be numeric types
+        base_type := lower(trim(regexp_replace(res_type, '\(.*\)', '')));
+        IF base_type NOT IN (
+            'int', 'int2', 'int4', 'int8', 'integer', 'smallint', 'bigint',
+            'numeric', 'decimal', 'real', 'float', 'float4', 'float8',
+            'double precision', 'money'
+        ) THEN
+            RAISE EXCEPTION 'Resource "%" must be a numeric type, got: "%"', res_key, res_type;
         END IF;
     END LOOP;
 END;
@@ -169,7 +206,7 @@ BEGIN
     PERFORM accum._validate_name(p_name);
     PERFORM accum._validate_dimensions(p_dimensions);
 
-    FOR dim_key, dim_type IN SELECT * FROM jsonb_each_text(p_dimensions)
+    FOR dim_key, dim_type IN SELECT key, value FROM jsonb_each_text(p_dimensions) ORDER BY key
     LOOP
         IF arg_idx > 0 THEN
             hash_args := hash_args || ', ';
