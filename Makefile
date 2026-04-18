@@ -71,7 +71,7 @@ PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
 # Custom targets
-.PHONY: test-docker test-tap test-all
+.PHONY: test-docker test-tap test-all bench bench-docker bench-no-rebuild
 
 test-docker:
 	docker compose -f docker/docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test-runner
@@ -80,3 +80,12 @@ test-tap:
 	docker compose -f docker/docker-compose.test.yml run --rm test-runner
 
 test-all: test-docker
+
+bench-docker:
+	./bench/run_bench.sh
+
+bench-no-rebuild:
+	./bench/run_bench.sh --no-build
+
+bench:
+	./bench/run_bench.sh --local
