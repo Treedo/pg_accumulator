@@ -69,6 +69,9 @@ BEGIN
 
     -- 7. Generate read functions (balance/turnover/movements)
     PERFORM @extschema@._generate_read_functions(name, kind, dimensions, resources, high_write);
+
+    -- 8. Create initial partitions
+    PERFORM @extschema@._create_initial_partitions(name, partition_by, 3);
 END;
 $$;
 

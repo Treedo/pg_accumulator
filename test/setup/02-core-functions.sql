@@ -533,6 +533,9 @@ BEGIN
         PERFORM accum._generate_hash_function(name, dimensions);
         PERFORM accum._generate_triggers(name, kind, dimensions, resources, high_write);
         PERFORM accum._generate_read_functions(name, kind, dimensions, resources, high_write);
+
+        -- Create initial partitions
+        PERFORM accum._create_initial_partitions(name, partition_by, 3);
     EXCEPTION WHEN OTHERS THEN
         -- Cleanup partially created objects on failure
         PERFORM accum._ddl_drop_infrastructure(name);
@@ -760,6 +763,12 @@ BEGIN
         END IF;
         values_str := values_str || '(' || tuple || ')';
         total_count := total_count + 1;
+    END LOOP;
+
+    -- Ensure partitions exist for all periods (before INSERT to avoid DDL-during-DML)
+    FOR mov IN SELECT * FROM jsonb_array_elements(movements)
+    LOOP
+        PERFORM accum._ensure_partition(p_register, (mov->>'period')::timestamptz);
     END LOOP;
 
     -- Single batch INSERT — triggers fire once per statement
@@ -1701,6 +1710,350 @@ BEGIN
         p_name || '_balance_cache_delta') INTO cnt;
 
     RETURN cnt;
+END;
+$$;
+
+
+-- ============================================================
+-- PARTITIONING (mirrors sql/09_partitioning.sql)
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION accum._partition_suffix(
+    p_date         date,
+    p_partition_by text
+) RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+    CASE p_partition_by
+        WHEN 'day' THEN
+            RETURN to_char(p_date, 'YYYY_MM_DD');
+        WHEN 'month' THEN
+            RETURN to_char(p_date, 'YYYY_MM');
+        WHEN 'quarter' THEN
+            RETURN to_char(p_date, 'YYYY') || '_q' || to_char(p_date, 'Q');
+        WHEN 'year' THEN
+            RETURN to_char(p_date, 'YYYY');
+        ELSE
+            RAISE EXCEPTION 'Invalid partition_by: %', p_partition_by;
+    END CASE;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum._partition_range_start(
+    p_date         date,
+    p_partition_by text
+) RETURNS date
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+    CASE p_partition_by
+        WHEN 'day' THEN
+            RETURN p_date;
+        WHEN 'month' THEN
+            RETURN date_trunc('month', p_date)::date;
+        WHEN 'quarter' THEN
+            RETURN date_trunc('quarter', p_date)::date;
+        WHEN 'year' THEN
+            RETURN date_trunc('year', p_date)::date;
+        ELSE
+            RAISE EXCEPTION 'Invalid partition_by: %', p_partition_by;
+    END CASE;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum._partition_range_end(
+    p_range_start  date,
+    p_partition_by text
+) RETURNS date
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+    CASE p_partition_by
+        WHEN 'day' THEN
+            RETURN p_range_start + interval '1 day';
+        WHEN 'month' THEN
+            RETURN (p_range_start + interval '1 month')::date;
+        WHEN 'quarter' THEN
+            RETURN (p_range_start + interval '3 months')::date;
+        WHEN 'year' THEN
+            RETURN (p_range_start + interval '1 year')::date;
+        ELSE
+            RAISE EXCEPTION 'Invalid partition_by: %', p_partition_by;
+    END CASE;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum._partition_exists(
+    p_parent_table text,
+    p_suffix       text
+) RETURNS boolean
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'accum'
+          AND c.relname = p_parent_table || '_' || p_suffix
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum._create_partition(
+    p_name         text,
+    p_partition_by text,
+    p_range_start  date
+) RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_parent     text := p_name || '_movements';
+    v_suffix     text;
+    v_part_name  text;
+    v_range_end  date;
+    v_lock_key   bigint;
+BEGIN
+    v_suffix    := accum._partition_suffix(p_range_start, p_partition_by);
+    v_part_name := v_parent || '_' || v_suffix;
+    v_range_end := accum._partition_range_end(p_range_start, p_partition_by);
+
+    -- Advisory lock to prevent concurrent creation
+    v_lock_key := hashtext(v_part_name);
+    PERFORM pg_advisory_xact_lock(v_lock_key);
+
+    -- Re-check after lock
+    IF accum._partition_exists(v_parent, v_suffix) THEN
+        RETURN false;
+    END IF;
+
+    EXECUTE format(
+        'CREATE TABLE accum.%I PARTITION OF accum.%I
+         FOR VALUES FROM (%L) TO (%L)',
+        v_part_name,
+        v_parent,
+        p_range_start::timestamptz,
+        v_range_end::timestamptz
+    );
+
+    RETURN true;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum._create_initial_partitions(
+    p_name         text,
+    p_partition_by text,
+    p_ahead        int DEFAULT 3
+) RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_current    date;
+    v_count      int := 0;
+    v_created    boolean;
+    i            int;
+BEGIN
+    v_current := accum._partition_range_start(current_date, p_partition_by);
+
+    FOR i IN 0..p_ahead
+    LOOP
+        v_created := accum._create_partition(p_name, p_partition_by, v_current);
+        IF v_created THEN
+            v_count := v_count + 1;
+        END IF;
+
+        CASE p_partition_by
+            WHEN 'day' THEN
+                v_current := v_current + interval '1 day';
+            WHEN 'month' THEN
+                v_current := (v_current + interval '1 month')::date;
+            WHEN 'quarter' THEN
+                v_current := (v_current + interval '3 months')::date;
+            WHEN 'year' THEN
+                v_current := (v_current + interval '1 year')::date;
+        END CASE;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum.register_create_partitions(
+    p_name  text,
+    p_ahead interval DEFAULT interval '6 months'
+) RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE
+    reg          record;
+    v_current    date;
+    v_end        date;
+    v_count      int := 0;
+    v_created    boolean;
+BEGIN
+    SELECT * INTO reg FROM accum._registers r WHERE r.name = p_name;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Register "%" does not exist', p_name;
+    END IF;
+
+    v_current := accum._partition_range_start(current_date, reg.partition_by);
+    v_end     := (current_date + p_ahead)::date;
+
+    WHILE v_current <= v_end
+    LOOP
+        v_created := accum._create_partition(p_name, reg.partition_by, v_current);
+        IF v_created THEN
+            v_count := v_count + 1;
+        END IF;
+
+        CASE reg.partition_by
+            WHEN 'day' THEN
+                v_current := v_current + interval '1 day';
+            WHEN 'month' THEN
+                v_current := (v_current + interval '1 month')::date;
+            WHEN 'quarter' THEN
+                v_current := (v_current + interval '3 months')::date;
+            WHEN 'year' THEN
+                v_current := (v_current + interval '1 year')::date;
+        END CASE;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum.register_detach_partitions(
+    p_name       text,
+    p_older_than interval DEFAULT interval '2 years'
+) RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE
+    reg         record;
+    v_cutoff    timestamptz;
+    v_count     int := 0;
+    part_rec    record;
+    v_range_end text;
+BEGIN
+    SELECT * INTO reg FROM accum._registers r WHERE r.name = p_name;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Register "%" does not exist', p_name;
+    END IF;
+
+    v_cutoff := now() - p_older_than;
+
+    FOR part_rec IN
+        SELECT child.relname AS part_name,
+               pg_get_expr(c.relpartbound, c.oid) AS bound_expr
+        FROM pg_inherits i
+        JOIN pg_class parent ON i.inhparent = parent.oid
+        JOIN pg_class child  ON i.inhrelid  = child.oid
+        JOIN pg_catalog.pg_class c ON c.oid = child.oid
+        JOIN pg_namespace ns ON parent.relnamespace = ns.oid
+        WHERE parent.relname = p_name || '_movements'
+          AND ns.nspname = 'accum'
+          AND child.relname != p_name || '_movements_default'
+        ORDER BY child.relname
+    LOOP
+        v_range_end := substring(part_rec.bound_expr FROM 'TO \(''([^'']+)''\)');
+
+        IF v_range_end IS NOT NULL AND v_range_end::timestamptz <= v_cutoff THEN
+            EXECUTE format(
+                'ALTER TABLE accum.%I DETACH PARTITION accum.%I',
+                p_name || '_movements',
+                part_rec.part_name
+            );
+            v_count := v_count + 1;
+        END IF;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum.register_partitions(p_name text)
+RETURNS TABLE(
+    partition_name text,
+    from_date      timestamptz,
+    to_date        timestamptz,
+    row_count      bigint,
+    total_size     text,
+    is_default     boolean
+)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    reg      record;
+    part_rec record;
+    v_from   text;
+    v_to     text;
+    v_cnt    bigint;
+    v_sz     text;
+BEGIN
+    SELECT * INTO reg FROM accum._registers r WHERE r.name = p_name;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Register "%" does not exist', p_name;
+    END IF;
+
+    FOR part_rec IN
+        SELECT child.relname AS part_name,
+               pg_get_expr(c.relpartbound, c.oid) AS bound_expr,
+               child.oid AS child_oid
+        FROM pg_inherits i
+        JOIN pg_class parent ON i.inhparent = parent.oid
+        JOIN pg_class child  ON i.inhrelid  = child.oid
+        JOIN pg_catalog.pg_class c ON c.oid = child.oid
+        JOIN pg_namespace ns ON parent.relnamespace = ns.oid
+        WHERE parent.relname = p_name || '_movements'
+          AND ns.nspname = 'accum'
+        ORDER BY child.relname
+    LOOP
+        SELECT COALESCE(s.n_live_tup, 0) INTO v_cnt
+        FROM pg_stat_user_tables s
+        WHERE s.relid = part_rec.child_oid;
+        IF v_cnt IS NULL THEN v_cnt := 0; END IF;
+
+        v_sz := pg_size_pretty(pg_total_relation_size(part_rec.child_oid));
+
+        partition_name := part_rec.part_name;
+        total_size     := v_sz;
+        row_count      := v_cnt;
+
+        IF part_rec.part_name = p_name || '_movements_default' THEN
+            is_default := true;
+            from_date  := NULL;
+            to_date    := NULL;
+        ELSE
+            is_default := false;
+            v_from := substring(part_rec.bound_expr FROM 'FROM \(''([^'']+)''\)');
+            v_to   := substring(part_rec.bound_expr FROM 'TO \(''([^'']+)''\)');
+            from_date := v_from::timestamptz;
+            to_date   := v_to::timestamptz;
+        END IF;
+
+        RETURN NEXT;
+    END LOOP;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION accum._ensure_partition(
+    p_name   text,
+    p_period timestamptz
+) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_reg          record;
+    v_range_start  date;
+    v_suffix       text;
+    v_parent       text;
+BEGIN
+    SELECT * INTO v_reg
+    FROM accum._registers r
+    WHERE r.name = p_name;
+
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    v_range_start := accum._partition_range_start(p_period::date, v_reg.partition_by);
+    v_suffix      := accum._partition_suffix(v_range_start, v_reg.partition_by);
+    v_parent      := p_name || '_movements';
+
+    IF NOT accum._partition_exists(v_parent, v_suffix) THEN
+        PERFORM accum._create_partition(p_name, v_reg.partition_by, v_range_start);
+    END IF;
 END;
 $$;
 $$;

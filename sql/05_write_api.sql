@@ -86,7 +86,13 @@ BEGIN
         total_count := total_count + 1;
     END LOOP;
 
-    -- 5. Single batch INSERT (triggers fire once per statement)
+    -- 5. Ensure partitions exist for all periods (before INSERT to avoid DDL-during-DML)
+    FOR mov IN SELECT * FROM jsonb_array_elements(movements)
+    LOOP
+        PERFORM @extschema@._ensure_partition(p_register, (mov->>'period')::timestamptz);
+    END LOOP;
+
+    -- 6. Single batch INSERT (triggers fire once per statement)
     IF total_count > 0 THEN
         EXECUTE format('INSERT INTO @extschema@.%I (%s) VALUES %s',
             p_register || '_movements', col_list, values_str);
