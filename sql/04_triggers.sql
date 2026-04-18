@@ -177,11 +177,18 @@ BEGIN
                 p_name || '_balance_cache'
             );
         ELSE
-            -- High-write: append individual rows to delta buffer
+            -- High-write: seed balance_cache rows (zeroed resources) then append to delta buffer
             cache_upsert := format(
-                'INSERT INTO @extschema@.%I (dim_hash, %s)
+                'INSERT INTO @extschema@.%I (dim_hash, %s, last_movement_at, last_movement_id, version)
+                 SELECT DISTINCT ON (dim_hash) dim_hash, %s, now(), id, 0
+                 FROM new_rows
+                 ON CONFLICT (dim_hash) DO NOTHING;
+                 INSERT INTO @extschema@.%I (dim_hash, %s)
                  SELECT dim_hash, %s
                  FROM new_rows',
+                p_name || '_balance_cache',
+                dim_cols,
+                dim_cols,
                 p_name || '_balance_cache_delta',
                 res_cols,
                 res_cols
