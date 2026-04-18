@@ -48,5 +48,5 @@ services:
         done
 
         echo '=== Running pgTAP tests ==='
-        pg_prove --verbose --recurse /build/pg_accumulator/test/sql/
+        pg_prove --verbose --recurse --ext .sql /build/pg_accumulator/test/sql/
       "

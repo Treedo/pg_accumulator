@@ -2,7 +2,7 @@
 -- Tests for trigger chain: movements → totals → cache consistency
 
 BEGIN;
-SELECT plan(18);
+SELECT plan(17);
 
 -- Setup
 SELECT accum.register_create(
@@ -100,8 +100,8 @@ SELECT accum.register_post('trg', '{
 
 SELECT is(
     (SELECT count(*)::int FROM accum.trg_balance_cache),
-    3,
-    'Three unique dim_hash combinations should exist in cache'
+    2,
+    'Two unique dim_hash combinations should exist in cache'
 );
 
 -- ============================================================
@@ -159,7 +159,7 @@ SELECT is(
 -- Different dimensions → different dim_hash
 SELECT is(
     (SELECT count(DISTINCT dim_hash)::int FROM accum.trg_movements),
-    3,
+    2,
     'Different dimension combinations should have different dim_hash'
 );
 

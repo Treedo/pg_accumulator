@@ -2,7 +2,7 @@
 -- Tests for register_create() — DDL generation, infrastructure creation
 
 BEGIN;
-SELECT plan(35);
+SELECT plan(37);
 
 -- ============================================================
 -- TEST: Create a basic balance register
