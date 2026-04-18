@@ -16,9 +16,12 @@ services:
       retries: 10
     command: >
       postgres
-        -c shared_preload_libraries=''
+        -c shared_preload_libraries='pg_accumulator'
         -c log_statement=all
         -c log_min_messages=notice
+        -c pg_accumulator.background_workers=1
+        -c pg_accumulator.delta_merge_interval=2000
+        -c pg_accumulator.maintenance_interval=30000
 
   # Test runner
   test-runner:

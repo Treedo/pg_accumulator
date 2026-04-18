@@ -23,3 +23,6 @@ RUN cpan TAP::Parser::SourceHandler::pgTAP
 # Copy extension source
 COPY . /build/pg_accumulator
 WORKDIR /build/pg_accumulator
+
+# Build and install the C extension
+RUN make clean && make && make install

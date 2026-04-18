@@ -2525,4 +2525,52 @@ BEGIN
     RETURN result;
 END;
 $$;
+
+
+-- ============================================================
+-- CONFIG / MAINTENANCE HELPERS (mirrors sql/11_config.sql)
+-- ============================================================
+
+CREATE OR REPLACE VIEW accum._config AS
+SELECT
+    current_setting('pg_accumulator.background_workers',  true) AS background_workers,
+    current_setting('pg_accumulator.maintenance_interval', true) AS maintenance_interval,
+    current_setting('pg_accumulator.delta_merge_interval', true) AS delta_merge_interval,
+    current_setting('pg_accumulator.delta_merge_delay',   true) AS delta_merge_delay,
+    current_setting('pg_accumulator.delta_merge_batch_size', true) AS delta_merge_batch_size,
+    current_setting('pg_accumulator.partitions_ahead',    true) AS partitions_ahead,
+    current_setting('pg_accumulator.schema',              true) AS schema;
+
+CREATE OR REPLACE FUNCTION accum._maintenance_status()
+RETURNS TABLE(
+    pid        int,
+    worker_name text,
+    state      text,
+    query      text,
+    started_at timestamptz
+)
+LANGUAGE sql STABLE AS $$
+    SELECT
+        pid,
+        backend_type AS worker_name,
+        state,
+        query,
+        backend_start AS started_at
+    FROM pg_stat_activity
+    WHERE backend_type LIKE 'pg_accumulator%'
+    ORDER BY pid;
+$$;
+
+CREATE OR REPLACE FUNCTION accum._force_delta_merge(
+    p_max_age     interval DEFAULT interval '0 seconds',
+    p_batch_size  int DEFAULT 1000000
+) RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE
+    total int;
+BEGIN
+    total := accum._delta_merge(p_max_age, p_batch_size);
+    RETURN total;
+END;
+$$;
 $$;
