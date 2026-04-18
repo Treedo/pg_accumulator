@@ -261,6 +261,9 @@ BEGIN
     EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
         '_trg_' || p_name || '_after_delete');
 
+    -- Drop read functions (balance/turnover/movements)
+    PERFORM @extschema@._drop_read_functions(p_name);
+
     -- Drop hash function
     PERFORM @extschema@._drop_hash_function(p_name);
 END;

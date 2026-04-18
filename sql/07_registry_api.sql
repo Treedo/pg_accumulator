@@ -66,6 +66,9 @@ BEGIN
 
     -- 6. Generate triggers (movement→totals→cache chain)
     PERFORM @extschema@._generate_triggers(name, kind, dimensions, resources, high_write);
+
+    -- 7. Generate read functions (balance/turnover/movements)
+    PERFORM @extschema@._generate_read_functions(name, kind, dimensions, resources, high_write);
 END;
 $$;
 
@@ -224,6 +227,13 @@ BEGIN
             '_trg_' || p_name || '_after_delete');
 
         PERFORM @extschema@._generate_triggers(
+            p_name, reg.kind, new_dimensions, new_resources,
+            coalesce(high_write, reg.high_write)
+        );
+
+        -- Regenerate read functions with updated structure
+        PERFORM @extschema@._drop_read_functions(p_name);
+        PERFORM @extschema@._generate_read_functions(
             p_name, reg.kind, new_dimensions, new_resources,
             coalesce(high_write, reg.high_write)
         );
