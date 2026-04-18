@@ -53,11 +53,22 @@ $$;
 
 -- ============================================================
 -- DROP HASH FUNCTION for a register
+-- Handles multiple overloads (e.g. after register_alter adds dimensions)
 -- ============================================================
 CREATE OR REPLACE FUNCTION @extschema@._drop_hash_function(p_name text)
 RETURNS void
 LANGUAGE plpgsql AS $$
+DECLARE
+    func_oid oid;
 BEGIN
-    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE', '_hash_' || p_name);
+    FOR func_oid IN
+        SELECT p.oid
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = '@extschema@'
+          AND p.proname = '_hash_' || p_name
+    LOOP
+        EXECUTE format('DROP FUNCTION IF EXISTS %s CASCADE', func_oid::regprocedure);
+    END LOOP;
 END;
 $$;

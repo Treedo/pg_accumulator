@@ -232,7 +232,17 @@ $$;
 CREATE OR REPLACE FUNCTION accum._drop_hash_function(p_name text)
 RETURNS void
 LANGUAGE plpgsql AS $$
+DECLARE
+    func_oid oid;
 BEGIN
-    EXECUTE format('DROP FUNCTION IF EXISTS accum.%I CASCADE', '_hash_' || p_name);
+    FOR func_oid IN
+        SELECT p.oid
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'accum'
+          AND p.proname = '_hash_' || p_name
+    LOOP
+        EXECUTE format('DROP FUNCTION IF EXISTS %s CASCADE', func_oid::regprocedure);
+    END LOOP;
 END;
 $$;

@@ -2,7 +2,7 @@
 -- Tests for register_list() and register_info()
 
 BEGIN;
-SELECT plan(12);
+SELECT plan(17);
 
 -- Setup: create test registers
 SELECT accum.register_create(
@@ -53,6 +53,27 @@ SELECT is(
 );
 
 -- ============================================================
+-- TEST: register_list movements_count
+-- ============================================================
+SELECT is(
+    (SELECT movements_count FROM accum.register_list() WHERE name = 'reg_a'),
+    0::bigint,
+    'reg_a should have 0 movements initially'
+);
+
+-- Add some movements and check count
+SELECT accum.register_post('reg_a', '[
+    {"recorder":"doc:1","period":"2026-04-18","warehouse":1,"product":100,"quantity":10},
+    {"recorder":"doc:2","period":"2026-04-18","warehouse":1,"product":101,"quantity":5}
+]');
+
+SELECT is(
+    (SELECT movements_count FROM accum.register_list() WHERE name = 'reg_a'),
+    2::bigint,
+    'reg_a should have 2 movements after posting'
+);
+
+-- ============================================================
 -- TEST: register_info returns correct details
 -- ============================================================
 SELECT is(
@@ -86,6 +107,30 @@ SELECT is(
 );
 
 -- ============================================================
+-- TEST: register_info includes movements_count
+-- ============================================================
+SELECT is(
+    (SELECT (accum.register_info('reg_a')->>'movements_count')::int),
+    2,
+    'Info should show 2 movements for reg_a'
+);
+
+-- ============================================================
+-- TEST: register_info includes tables
+-- ============================================================
+SELECT is(
+    (SELECT accum.register_info('reg_a')->'tables'->>'movements'),
+    'reg_a_movements',
+    'Info tables should include movements table name'
+);
+
+SELECT is(
+    (SELECT accum.register_info('reg_a')->'tables'->>'balance_cache'),
+    'reg_a_balance_cache',
+    'Info tables should include balance_cache for balance register'
+);
+
+-- ============================================================
 -- TEST: register_info for nonexistent
 -- ============================================================
 SELECT throws_ok(
@@ -107,7 +152,7 @@ SELECT is(
 );
 
 -- Cleanup
-SELECT accum.register_drop('reg_a');
+SELECT accum.register_drop('reg_a', force := true);
 
 SELECT * FROM finish();
 ROLLBACK;
