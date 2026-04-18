@@ -1,0 +1,3 @@
+-- sql/09_partitioning.sql
+-- Partition management functions
+-- Placeholder: register_create_partitions, register_detach_partitions, register_partitions

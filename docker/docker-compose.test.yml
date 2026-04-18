@@ -1,0 +1,52 @@
+services:
+  # Test database
+  postgres-test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test
+    container_name: pg_accumulator_test_db
+    environment:
+      POSTGRES_DB: accumulator_test
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d accumulator_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    command: >
+      postgres
+        -c shared_preload_libraries=''
+        -c log_statement=all
+        -c log_min_messages=notice
+
+  # Test runner
+  test-runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test
+    container_name: pg_accumulator_test_runner
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres-test
+      PGPORT: 5432
+      PGDATABASE: accumulator_test
+      PGUSER: test
+      PGPASSWORD: test_password
+    volumes:
+      - ../test:/build/pg_accumulator/test:ro
+    command: >
+      bash -c "
+        echo '=== Installing pgTAP in test database ==='
+        psql -c 'CREATE EXTENSION IF NOT EXISTS pgtap;'
+        
+        echo '=== Running SQL setup ==='
+        for f in /build/pg_accumulator/test/setup/*.sql; do
+          [ -f \"$$f\" ] && psql -f \"$$f\"
+        done
+
+        echo '=== Running pgTAP tests ==='
+        pg_prove --verbose --recurse /build/pg_accumulator/test/sql/
+      "

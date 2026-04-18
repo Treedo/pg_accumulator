@@ -1,0 +1,12 @@
+.DS_Store
+*.o
+*.so
+*.dylib
+*.bc
+/results/
+/regression.diffs
+/regression.out
+/log/
+/sql/pg_accumulator--*.sql
+!sql/pg_accumulator--*.sql.in
+/tmp_check/

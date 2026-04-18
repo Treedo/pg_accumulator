@@ -1,0 +1,3 @@
+-- sql/05_write_api.sql
+-- Public write API functions
+-- Placeholder: register_post, register_unpost, register_repost

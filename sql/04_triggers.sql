@@ -1,0 +1,3 @@
+-- sql/04_triggers.sql
+-- Trigger function templates
+-- Placeholder: templates for movement/totals/cache trigger generation

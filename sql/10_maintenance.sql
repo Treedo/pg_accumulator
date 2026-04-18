@@ -1,0 +1,3 @@
+-- sql/10_maintenance.sql
+-- Maintenance and diagnostic functions
+-- Placeholder: register_verify, register_rebuild_totals, register_rebuild_cache, register_stats

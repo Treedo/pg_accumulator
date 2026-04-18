@@ -1,0 +1,3 @@
+-- sql/06_read_api.sql
+-- Public read API function templates
+-- Placeholder: balance, turnover, movements function generators

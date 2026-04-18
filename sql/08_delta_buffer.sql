@@ -1,0 +1,3 @@
+-- sql/08_delta_buffer.sql
+-- Delta buffer functions for high_write mode
+-- Placeholder: delta merge, delta-aware reads

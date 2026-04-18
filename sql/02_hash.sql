@@ -1,0 +1,3 @@
+-- sql/02_hash.sql
+-- Hash function templates for dimension hashing
+-- Placeholder: will contain helper functions for hash generation

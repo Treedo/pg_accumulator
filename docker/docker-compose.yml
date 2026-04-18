@@ -1,0 +1,24 @@
+services:
+  # Development PostgreSQL
+  postgres:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pg_accumulator_dev
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: accumulator_dev
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../:/workspace:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d accumulator_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

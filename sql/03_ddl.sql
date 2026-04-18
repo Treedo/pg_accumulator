@@ -1,0 +1,3 @@
+-- sql/03_ddl.sql
+-- DDL generation helpers
+-- Placeholder: templates for creating register infrastructure

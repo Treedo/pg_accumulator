@@ -1,0 +1,3 @@
+-- sql/11_config.sql
+-- Configuration and GUC parameters
+-- Placeholder: default configuration setup

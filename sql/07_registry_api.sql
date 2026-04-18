@@ -1,0 +1,3 @@
+-- sql/07_registry_api.sql
+-- Public registry management API
+-- Placeholder: register_create, register_alter, register_drop, register_list, register_info

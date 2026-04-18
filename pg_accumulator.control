@@ -1,0 +1,7 @@
+comment = 'Accumulation Registers for PostgreSQL — balance and turnover tracking'
+default_version = '0.1.0'
+module_pathname = '$libdir/pg_accumulator'
+relocatable = false
+schema = accum
+requires = 'plpgsql'
+superuser = true
