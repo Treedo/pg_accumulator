@@ -7,17 +7,20 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  test:
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
-    - name: configure
-      run: ./configure
-    - name: make
-      run: make
-    - name: make check
-      run: make check
-    - name: make distcheck
-      run: make distcheck
+
+    - name: Run pgTAP tests via Docker
+      run: |
+        docker compose -f docker/docker-compose.test.yml up \
+          --build \
+          --abort-on-container-exit \
+          --exit-code-from test-runner
+
+    - name: Tear down Docker
+      if: always()
+      run: docker compose -f docker/docker-compose.test.yml down -v --remove-orphans
