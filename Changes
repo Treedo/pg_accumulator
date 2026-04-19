@@ -1,0 +1,21 @@
+Revision history for PostgreSQL extension pg_accumulator
+
+1.1.3   2026-04-20
+    - Initial PGXN release
+    - Accumulation registers with balance and turnover tracking
+    - Declarative register_create() API with JSON dimensions/resources
+    - Full SQL API: register_post, register_unpost, register_repost
+    - Hierarchical totals: totals_day, totals_month, totals_year
+    - O(1) balance_cache with synchronous trigger updates
+    - Historical balance queries using totals hierarchy optimization
+    - Turnover queries with date range filtering and grouping
+    - High-write mode with UNLOGGED delta buffer and background worker compaction
+    - Retroactive corrections with O(1) complexity
+    - Protection triggers on derived tables
+    - register_verify() consistency auditing
+    - register_rebuild_totals() and register_rebuild_cache() recovery
+    - Partition management for movements tables
+    - Background worker for delta merge and maintenance
+    - 22 pgTAP test suites
+    - Demo applications: Python/Flask, TypeScript/Express, Prisma, SQLAlchemy
+    - Integration packages: prisma-accumulator, sqlalchemy-accumulator

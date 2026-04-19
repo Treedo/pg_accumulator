@@ -1,0 +1,57 @@
+{
+   "name": "pg_accumulator",
+   "abstract": "Accumulation registers for PostgreSQL — balance and turnover tracking",
+   "description": "A high-performance data accounting engine for PostgreSQL. Declarative accumulation registers that provide instant access to balances and turnovers across arbitrary dimensions — with full transactional consistency, retroactive corrections, and zero application-side aggregation logic.",
+   "version": "1.1.3",
+   "maintainer": "Treedo <s@treedo.name>",
+   "license": "postgresql",
+   "provides": {
+      "pg_accumulator": {
+         "abstract": "Accumulation registers for PostgreSQL — balance and turnover tracking",
+         "file": "sql/00_schema.sql",
+         "docfile": "doc/pg_accumulator.md",
+         "version": "1.1.3"
+      }
+   },
+   "prereqs": {
+      "runtime": {
+         "requires": {
+            "PostgreSQL": "14.0.0",
+            "plpgsql": 0
+         }
+      },
+      "test": {
+         "requires": {
+            "pgTAP": 0
+         }
+      }
+   },
+   "resources": {
+      "bugtracker": {
+         "web": "https://github.com/Treedo/pg_accumulator/issues"
+      },
+      "repository": {
+         "url": "https://github.com/Treedo/pg_accumulator.git",
+         "web": "https://github.com/Treedo/pg_accumulator",
+         "type": "git"
+      }
+   },
+   "generated_by": "Treedo",
+   "release_status": "testing",
+   "tags": [
+      "accounting",
+      "finance",
+      "balance",
+      "turnover",
+      "erp",
+      "accumulation register",
+      "ledger",
+      "inventory",
+      "aggregation",
+      "cache"
+   ],
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "https://pgxn.org/meta/spec.txt"
+   }
+}

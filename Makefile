@@ -2,7 +2,9 @@
 # PostgreSQL Extension Build System
 
 EXTENSION    = pg_accumulator
-EXTVERSION   = 1.1.3
+EXTVERSION   = $(shell grep -m 1 '"version":' META.json | \
+               sed -e 's/[[:space:]]*"version":[[:space:]]*"\([^"]*\)",\{0,1\}/\1/')
+DISTVERSION  = $(EXTVERSION)
 MODULE_big   = pg_accumulator
 
 # Only list source files that actually exist.
@@ -41,6 +43,7 @@ OBJS = src/core/pg_accumulator.o \
 PG_CPPFLAGS = -I$(srcdir)/src
 
 DATA = sql/pg_accumulator--$(EXTVERSION).sql
+DOCS = $(wildcard doc/*.md)
 EXTRA_CLEAN = sql/pg_accumulator--$(EXTVERSION).sql
 
 # SQL source files (concatenated into final extension SQL)
@@ -69,6 +72,11 @@ REGRESS_OPTS = --inputdir=test
 PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+
+# PGXN distribution archive
+dist:
+	git archive --format zip --prefix=$(EXTENSION)-$(DISTVERSION)/ \
+		-o $(EXTENSION)-$(DISTVERSION).zip HEAD
 
 # Custom targets
 .PHONY: test-docker test-tap test-all bench bench-docker bench-no-rebuild
