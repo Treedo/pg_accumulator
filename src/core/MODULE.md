@@ -1,57 +1,62 @@
-# Модуль: Core (Ядро розширення)
+# Module: Core
 
-## Призначення
-Фундаментальний модуль, який ініціалізує розширення, створює базову схему та підтримує внутрішній реєстр метаданих усіх створених регістрів накопичення.
+**Purpose:** Extension initialization, base schema creation, and internal metadata registry for all accumulation registers.
 
-## Файли
-- `pg_accumulator.c` — Точка входу: `_PG_init()`, реєстрація GUC-параметрів, запуск background worker
-- `schema.c` — Створення/валідація службової схеми `accum` (або вказаної користувачем)
-- `registry.c` — CRUD-операції над внутрішньою таблицею `_registers` (метадані регістрів)
+## Files
 
-## Відповідальність
+- `pg_accumulator.c` — Entry point: `_PG_init()`, GUC parameter registration, background worker launch
+- `schema.c` — Creation and validation of the `accum` service schema (or user-specified schema)
+- `registry.c` — CRUD operations on the internal `_registers` metadata table
 
-### 1. Ініціалізація розширення (`_PG_init`)
-- Реєстрація всіх GUC-параметрів (`pg_accumulator.schema`, `pg_accumulator.hash_function`, тощо)
-- Запуск background worker для обслуговування (delta merge, partition maintenance)
-- Реєстрація hook'ів при необхідності
+## Responsibilities
 
-### 2. Управління схемою (`schema.c`)
-- Створення схеми `accum` при `CREATE EXTENSION`
-- Створення службових таблиць:
-  ```sql
-  CREATE TABLE accum._registers (
-      name           text PRIMARY KEY,
-      kind           text NOT NULL CHECK (kind IN ('balance', 'turnover')),
-      dimensions     jsonb NOT NULL,
-      resources      jsonb NOT NULL,
-      totals_period  text NOT NULL DEFAULT 'day',
-      partition_by   text NOT NULL DEFAULT 'month',
-      high_write     boolean NOT NULL DEFAULT false,
-      recorder_type  text NOT NULL DEFAULT 'text',
-      created_at     timestamptz NOT NULL DEFAULT now(),
-      updated_at     timestamptz NOT NULL DEFAULT now()
-  );
-  ```
-- Валідація існування схеми перед операціями
+### 1. Extension Initialization (`_PG_init`)
 
-### 3. Реєстр метаданих (`registry.c`)
-- `_register_get(name)` — Отримати метадані регістру
-- `_register_put(name, ...)` — Зберегти/оновити метадані
-- `_register_delete(name)` — Видалити метадані
-- `_register_exists(name)` — Перевірити існування
-- `_register_list()` — Список усіх зареєстрованих регістрів
-- Валідація імен регістрів (латинські літери, цифри, `_`)
-- Валідація типів вимірів і ресурсів
+- Registration of all GUC parameters (`pg_accumulator.schema`, `pg_accumulator.hash_function`, etc.)
+- Background worker launch for maintenance tasks (delta merge, partition management)
+- Hook registration as needed
 
-## Залежності
-- Жодних внутрішніх залежностей (базовий модуль)
+### 2. Schema Management (`schema.c`)
 
-## SQL-файли
-- `sql/00_schema.sql` — DDL для службових таблиць
-- `sql/01_registry.sql` — Функції роботи з реєстром
+- `accum` schema is created at `CREATE EXTENSION` time
+- Creates internal service tables:
 
-## Тести
-- Створення/видалення схеми
-- CRUD операцій реєстру
-- Валідація некоректних імен/типів
-- Конкурентний доступ до реєстру
+```sql
+CREATE TABLE accum._registers (
+    name           text PRIMARY KEY,
+    kind           text NOT NULL CHECK (kind IN ('balance', 'turnover')),
+    dimensions     jsonb NOT NULL,
+    resources      jsonb NOT NULL,
+    totals_period  text NOT NULL DEFAULT 'day',
+    partition_by   text NOT NULL DEFAULT 'month',
+    high_write     boolean NOT NULL DEFAULT false,
+    recorder_type  text NOT NULL DEFAULT 'text',
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now()
+);
+```
+
+- Validates schema existence before operations
+
+### 3. Metadata Registry (`registry.c`)
+
+- `_register_get(name)` — Retrieve register metadata
+- `_register_put(name, ...)` — Store or update metadata
+- `_register_delete(name)` — Delete metadata
+- `_register_exists(name)` — Check existence
+- `_register_list()` — List all registered registers
+- Name validation (Latin letters, digits, `_`)
+- Dimension and resource type validation
+
+## Dependencies
+
+None — this is the foundational module.
+
+## SQL Sources
+
+- [sql/00_schema.sql](../../sql/00_schema.sql) — Service table DDL
+- [sql/01_registry.sql](../../sql/01_registry.sql) — Registry functions
+
+## Related Tests
+
+- [test/sql/01_core_registry.sql](../../test/sql/01_core_registry.sql) — Schema creation/deletion, registry CRUD, name/type validation, concurrent access

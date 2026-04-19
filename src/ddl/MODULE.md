@@ -1,93 +1,58 @@
-# Модуль: DDL Generator (Генерація структур даних)
+# Module: DDL Generator
 
-## Призначення
-Генерація всіх DDL-інструкцій (CREATE TABLE, CREATE INDEX, CREATE FUNCTION) при створенні нового регістру. Модуль перетворює декларативний опис регістру на конкретну інфраструктуру PostgreSQL.
+**Purpose:** Generates all DDL statements when creating a register — movements table (partitioned), totals tables (day/month/year), balance cache, delta buffer, indexes, and read functions.
 
-## Файли
-- `ddl_generator.c` — Координатор генерації, головна функція генерації
-- `ddl_tables.c` — Генерація таблиць (movements, totals, cache)
-- `ddl_indexes.c` — Генерація індексів
-- `ddl_functions.c` — Генерація SQL/PLPGSQL-функцій читання
+## Files
 
-## Відповідальність
+- `ddl_generator.c` — Orchestrates the full DDL generation pipeline
+- `ddl_tables.c` — Table creation: movements, totals, balance_cache, delta buffer
+- `ddl_indexes.c` — Index creation: dim_hash+period, recorder, per-dimension on cache
+- `ddl_functions.c` — Read function generation: balance, turnover, movements
 
-### 1. Генерація таблиці рухів (`ddl_tables.c`)
-```sql
--- Генерується для кожного регістру:
-CREATE TABLE accum.<name>_movements (
-    id             uuid          DEFAULT gen_random_uuid(),
-    recorded_at    timestamptz   DEFAULT now() NOT NULL,
-    recorder       <recorder_type> NOT NULL,
-    period         timestamptz   NOT NULL,
-    movement_type  text          DEFAULT 'regular' NOT NULL,
-    dim_hash       bigint        NOT NULL,
-    -- динамічні колонки вимірів
-    <dim1>         <type1>       NOT NULL,
-    <dim2>         <type2>       NOT NULL,
-    ...
-    -- динамічні колонки ресурсів
-    <res1>         <type1>       NOT NULL DEFAULT 0,
-    <res2>         <type2>       NOT NULL DEFAULT 0,
-    ...
-    PRIMARY KEY (id, period)
-) PARTITION BY RANGE (period);
-```
+## Responsibilities
 
-### 2. Генерація таблиць підсумків (`ddl_tables.c`)
-- `<name>_totals_month` — обороти за місяць, PK: (dim_hash, period)
-- `<name>_totals_year` — обороти за рік, PK: (dim_hash, period)
-- Включає денормалізовані виміри + ресурси (які підсумовуються)
-- Гранулярність залежить від `totals_period`
+### 1. Movements Table
 
-### 3. Генерація balance_cache (`ddl_tables.c`)
-- Тільки для `kind='balance'`
-- PK: `dim_hash`
-- Денормалізовані виміри + поточні залишки ресурсів
-- Службові поля: `last_movement_at`, `last_movement_id`, `version`
+Partitioned by `RANGE` on the `period` column. Granularity is configurable: `day`, `month`, `quarter`, `year`. Includes columns for `id` (UUID), `recorded_at`, `recorder`, `period`, `movement_type`, `dim_hash`, all declared dimensions, and all declared resources.
 
-### 4. Генерація delta buffer (`ddl_tables.c`)
-- Тільки якщо `high_write=true`
-- `UNLOGGED TABLE` з `bigserial` PK
-- Ресурсні колонки + `dim_hash` + `created_at`
+### 2. Totals Tables
 
-### 5. Генерація індексів (`ddl_indexes.c`)
-```
-movements:
-  - (dim_hash, period) — основний lookup
-  - (recorder) — для unpost/repost
-  - (period) — для partition pruning
+- `totals_day` — daily turnover aggregates (PK: `dim_hash` + `period`)
+- `totals_month` — monthly turnover aggregates (PK: `dim_hash` + `period`)
+- `totals_year` — annual turnover aggregates (PK: `dim_hash` + `period`)
 
-balance_cache:
-  - (dim1) — для фільтрованих запитів
-  - (dim1, dim2) — для часто фільтрованих пар
-  - Індекси створюються для кожного виміру окремо
+Totals store **turnovers** (net change per period), not cumulative balances. This design enables O(1) retroactive corrections without cascading recalculations.
 
-totals:
-  - PK (dim_hash, period) — покриваючий
-```
+### 3. Balance Cache
 
-### 6. Генерація функцій читання (`ddl_functions.c`)
-- `<name>_balance(dimensions, at_date)` — обчислення залишку
-- `<name>_turnover(from_date, to_date, dimensions, group_by)` — обороти
-- `<name>_movements(recorder, from_date, to_date, dimensions)` — фільтрація рухів
+Created only for `kind = 'balance'` registers. Stores the current cumulative balance per unique dimension combination, identified by `dim_hash` (PK). Includes denormalized dimension columns and a `version` counter for optimistic locking.
 
-## Безпека
-- Всі ідентифікатори обробляються через `quote_ident()` для захисту від SQL injection
-- Типи даних валідуються перед генерацією DDL
-- Імена регістрів перевіряються regex `^[a-z][a-z0-9_]*$`
+### 4. Delta Buffer
 
-## Залежності
-- `core/registry` — для отримання метаданих регістру
-- `hash` — для генерації хеш-функцій
+Created only when `high_write = true`. An `UNLOGGED` table with a `bigserial` PK for append-only writes, indexed by `(dim_hash, created_at)`.
 
-## SQL-файли
-- `sql/03_ddl.sql` — Шаблони та допоміжні функції генерації
+### 5. Indexes
 
-## Тести
-- Створення регістру з різними наборами вимірів/ресурсів
-- Перевірка структури всіх створених таблиць
-- Перевірка наявності всіх індексів
-- Перевірка генерованих функцій
-- Валідація некоректних типів (має повернути помилку)
-- Перевірка захисту від SQL injection в іменах
-- Створення регістру `balance` vs `turnover` (різна інфраструктура)
+- `(dim_hash, period)` on movements — fast filtered scans
+- `(recorder)` on movements — unpost/repost lookup
+- `(period)` on movements — partition pruning
+- Per-dimension indexes on balance_cache — application query support
+
+### 6. Read Functions
+
+Auto-generated per-register wrapper functions:
+- `<register>_balance(dimensions, at_date)` — balance query
+- `<register>_turnover(from_date, to_date, dimensions, group_by)` — turnover query
+- `<register>_movements(recorder, from_date, to_date, dimensions)` — movement listing
+
+## Security
+
+All identifiers are escaped with `quote_ident()`. Types are validated against an allowlist. Register names are checked against a strict regex pattern.
+
+## SQL Sources
+
+- [sql/03_ddl.sql](../../sql/03_ddl.sql) — DDL generation functions
+
+## Related Tests
+
+- [test/sql/02_register_create.sql](../../test/sql/02_register_create.sql) — Verifies DDL output: table structure, indexes, functions, partitions

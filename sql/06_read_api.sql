@@ -130,7 +130,7 @@ BEGIN
         END IF;
     ELSE
         -- 5. Historical balance: hierarchical computation
-        --    totals_year (full years) + totals_month (full months) + movements (partial month)
+        --    totals_year (full years) + totals_month (full months) + totals_day (full days) + movements (partial day)
         IF all_dims THEN
             EXECUTE format(
                 'SELECT jsonb_build_object(%s) FROM (
@@ -145,12 +145,18 @@ BEGIN
                      UNION ALL
                      SELECT %s FROM @extschema@.%I
                      WHERE dim_hash = $1
-                       AND period >= date_trunc(''month'', $2)
+                       AND period >= date_trunc(''month'', $2)::date
+                       AND period < $2::date
+                     UNION ALL
+                     SELECT %s FROM @extschema@.%I
+                     WHERE dim_hash = $1
+                       AND period >= $2::date::timestamptz
                        AND period <= $2
                  ) _hierarchy',
                 res_agg,
                 res_cols, p_register || '_totals_year',
                 res_cols, p_register || '_totals_month',
+                res_cols, p_register || '_totals_day',
                 res_cols, p_register || '_movements'
             ) INTO result USING v_dim_hash, p_at_date;
         ELSE
@@ -167,12 +173,18 @@ BEGIN
                      UNION ALL
                      SELECT %s FROM @extschema@.%I
                      WHERE TRUE %s
-                       AND period >= date_trunc(''month'', $1)
+                       AND period >= date_trunc(''month'', $1)::date
+                       AND period < $1::date
+                     UNION ALL
+                     SELECT %s FROM @extschema@.%I
+                     WHERE TRUE %s
+                       AND period >= $1::date::timestamptz
                        AND period <= $1
                  ) _hierarchy',
                 res_agg,
                 res_cols, p_register || '_totals_year', dim_where,
                 res_cols, p_register || '_totals_month', dim_where,
+                res_cols, p_register || '_totals_day', dim_where,
                 res_cols, p_register || '_movements', dim_where
             ) INTO result USING p_at_date;
         END IF;

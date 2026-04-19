@@ -1,53 +1,43 @@
-# Модуль: Hash (Хешування вимірів)
+# Module: Hash
 
-## Призначення
-Обчислення `dim_hash` — 64-бітного хешу комбінації вимірів, який використовується як ключ для швидкого lookup у таблицях підсумків та balance_cache.
+**Purpose:** Computes `dim_hash` — a 64-bit hash of the dimension value combination, used as the primary lookup key in totals and balance_cache tables.
 
-## Файли
-- `hash.c` — Реалізація хеш-функцій та SQL-обгорток
+## Files
 
-## Відповідальність
+- `hash.c` — Hash computation, per-register hash function generation
 
-### 1. Хеш-функції
-- **xxhash64** (за замовчуванням) — швидкий, з низькою ймовірністю колізій (<1/10^18)
-- **murmur3** — альтернатива, обирається через GUC `pg_accumulator.hash_function`
+## Responsibilities
 
-### 2. Генерація `_hash_<register>()` функцій
-Для кожного регістру автоматично створюється SQL-функція:
-```sql
-CREATE FUNCTION accum._hash_inventory(
-    warehouse integer,
-    product   integer,
-    lot       text
-) RETURNS bigint AS $$
-    -- Серіалізація значень вимірів у байтовий буфер
-    -- з урахуванням NULL (окреме значення)
-    -- Обчислення xxhash64 від буфера
-$$ LANGUAGE C IMMUTABLE STRICT;
-```
+### 1. Hash Algorithm
 
-### 3. Обробка NULL
-- NULL вважається окремим значенням виміру
-- `(warehouse=1, lot=NULL)` має інший hash ніж `(warehouse=1, lot='A')`
-- Використовується спеціальний sentinel-байт для розрізнення NULL
+- Default: xxhash64 (fast, low collision rate)
+- Alternative: murmur3 (selectable via `pg_accumulator.hash_function` GUC)
+- 64-bit output — collision probability below 1 in 10^18 for realistic dimension counts
 
-### 4. Серіалізація типів
-Конвертація PostgreSQL-типів у байтове представлення для хешування:
-- `int/bigint/smallint` — native byte order
-- `text/varchar` — UTF-8 bytes
-- `uuid` — 16 bytes raw
-- `date` — Julian day number
-- `boolean` — 1 byte
+### 2. Per-Register Hash Functions
 
-## Залежності
-- Зовнішня бібліотека xxhash (або вбудована реалізація)
+Auto-generates `_hash_<register>(dim1, dim2, ...)` functions for each register. These functions are declared as `IMMUTABLE STRICT` and implemented in C for maximum performance.
 
-## SQL-файли
-- `sql/02_hash.sql` — Шаблон генерації хеш-функцій
+### 3. Type Serialization
 
-## Тести
-- Детерміністичність: однакові входи → однаковий hash
-- NULL-обробка: різні hash для NULL та non-NULL
-- Колізії: статистичний тест на великій вибірці
-- Різні типи вимірів
-- Переключення між xxhash64 та murmur3
+Each dimension type is serialized into a byte sequence before hashing:
+
+| Type | Serialization |
+|---|---|
+| `int`, `bigint`, `smallint` | Native binary representation |
+| `text`, `varchar` | UTF-8 bytes |
+| `uuid` | 16 raw bytes |
+| `date` | Julian day number |
+| `boolean` | 1 byte (0 or 1) |
+
+### 4. NULL Handling
+
+NULL dimension values are serialized as a distinct sentinel byte, ensuring that `(warehouse=1, lot=NULL)` and `(warehouse=1, lot='')` produce different hashes.
+
+## SQL Sources
+
+- [sql/02_hash.sql](../../sql/02_hash.sql) — Hash function definitions
+
+## Related Tests
+
+- [test/sql/13_multiple_dimensions.sql](../../test/sql/13_multiple_dimensions.sql) — Multi-dimension hashing, NULL handling, collision avoidance

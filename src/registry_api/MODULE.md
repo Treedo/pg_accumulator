@@ -1,129 +1,62 @@
-# Модуль: Registry API (Управління регістрами)
+# Module: Registry API
 
-## Призначення
-Публічний API для створення, зміни, видалення та інспекції регістрів накопичення. Це головний інтерфейс адміністратора/розробника для декларативного управління обліковою інфраструктурою.
+**Purpose:** Public API for creating, altering, dropping, listing, and inspecting accumulation registers.
 
-## Файли
-- `create.c` — Реалізація `register_create()`
-- `alter.c` — Реалізація `register_alter()`
-- `drop.c` — Реалізація `register_drop()`
-- `list.c` — Реалізація `register_list()`
-- `info.c` — Реалізація `register_info()`
+## Files
 
-## Відповідальність
+- `create.c` — `register_create()` implementation
+- `alter.c` — `register_alter()` implementation
+- `drop.c` — `register_drop()` implementation
+- `list.c` — `register_list()` implementation
+- `info.c` — `register_info()` implementation
 
-### 1. `register_create(name, dimensions, resources, kind, ...)` (`create.c`)
+## Responsibilities
 
-Оркестрація створення повної інфраструктури регістру.
+### 1. `register_create(name, dimensions, resources, kind, ...)`
 
-**Послідовність:**
-```
-1. Валідація вхідних параметрів:
-   a) name — regex ^[a-z][a-z0-9_]*$, не зайнято
-   b) dimensions — валідний JSON, типи підтримуються
-   c) resources — валідний JSON, числові типи
-   d) kind — 'balance' або 'turnover'
-   e) totals_period — 'day', 'month', 'year'
-   f) partition_by — 'day', 'month', 'quarter', 'year'
+Full orchestration pipeline:
+1. Validate parameters (name format, dimension/resource types, kind)
+2. Insert metadata into `_registers`
+3. Generate DDL (movements, totals, balance_cache, delta buffer)
+4. Create triggers (BEFORE INSERT, AFTER INSERT, AFTER DELETE)
+5. Create initial partitions (current + `partitions_ahead` future)
+6. Create read functions (balance, turnover, movements)
+7. Create dimension hash function
 
-2. Зберегти метадані в _registers (core/registry)
+### 2. `register_alter(name, ...)`
 
-3. Генерація інфраструктури (ddl):
-   a) CREATE TABLE movements (partitioned)
-   b) CREATE TABLE totals_month
-   c) CREATE TABLE totals_year
-   d) CREATE TABLE balance_cache (якщо kind='balance')
-   e) CREATE TABLE balance_cache_delta (якщо high_write=true)
-   f) CREATE INDEX (усі необхідні)
-   g) CREATE FUNCTION _hash_<name>()
-   h) CREATE FUNCTION <name>_balance()
-   i) CREATE FUNCTION <name>_turnover()
-   j) CREATE FUNCTION <name>_movements()
+Supports:
+- Adding new dimensions — triggers full rebuild of totals and cache from movements
+- Adding new resources — adds column with `DEFAULT 0`; existing data is unaffected
+- Toggling `high_write` mode — creates or drops the delta buffer table
+- Changing partition granularity
 
-4. Генерація тригерів (triggers):
-   a) BEFORE INSERT trigger на movements
-   b) AFTER INSERT trigger на movements
-   c) AFTER DELETE trigger на movements
+Restrictions: cannot remove dimensions, change types, or change register kind.
 
-5. Створення початкових партицій (partitioning):
-   a) Поточний місяць
-   b) + N місяців наперед (згідно конфігурації)
-   c) Default партиція
-```
+### 3. `register_drop(name, force)`
 
-### 2. `register_alter(name, add_dimensions, add_resources, high_write, ...)` (`alter.c`)
+Drops all infrastructure created by `register_create()` via `DROP CASCADE`:
+- All tables (movements, totals, balance_cache, delta buffer)
+- All indexes, triggers, and functions
+- Metadata row from `_registers`
 
-Зміна структури існуючого регістру.
+Without `force := true`, fails if the register contains any movements.
 
-**Підтримувані операції:**
-- Додавання нових вимірів (потребує перерахунку)
-- Додавання нових ресурсів (без перерахунку, DEFAULT 0)
-- Зміна high_write режиму
-- Зміна параметрів партиціювання
+### 4. `register_list()`
 
-**Обмеження:**
-- Неможливо видалити вимір
-- Неможливо змінити тип існуючого виміру/ресурсу
-- Неможливо змінити kind (balance ↔ turnover)
+Returns a SETOF RECORD summary: name, kind, dimension count, resource count, movements count, created_at.
 
-**Перерахунок при додаванні виміру:**
-```
-1. ALTER TABLE movements ADD COLUMN <dim> <type>
-2. ALTER TABLE totals_month ADD COLUMN <dim> <type>
-3. ALTER TABLE totals_year ADD COLUMN <dim> <type>
-4. ALTER TABLE balance_cache ADD COLUMN <dim> <type>
-5. Перегенерувати _hash_<name>() з новим виміром
-6. UPDATE movements SET dim_hash = _hash_<name>(<all dims>)
-7. TRUNCATE totals_month, totals_year, balance_cache
-8. Перебудувати підсумки з рухів (register_rebuild_totals)
-→ Виконується в online-режимі без блокування читачів
-```
+### 5. `register_info(name)`
 
-### 3. `register_drop(name, force)` (`drop.c`)
+Returns a JSONB object with complete metadata: name, kind, dimensions, resources, totals_period, partition_by, high_write, recorder_type, movements_count, created_at.
 
-Видалення регістру та всієї інфраструктури.
+## SQL Sources
 
-**Алгоритм:**
-```
-1. Перевірка існування
-2. Якщо force=false і є дані → ERROR з підказкою
-3. DROP TABLE movements CASCADE
-4. DROP TABLE totals_month
-5. DROP TABLE totals_year
-6. DROP TABLE balance_cache (якщо існує)
-7. DROP TABLE balance_cache_delta (якщо існує)
-8. DROP FUNCTION _hash_<name>
-9. DROP FUNCTION <name>_balance (якщо існує)
-10. DROP FUNCTION <name>_turnover
-11. DROP FUNCTION <name>_movements
-12. DELETE FROM _registers WHERE name = $1
-```
+- [sql/07_registry_api.sql](../../sql/07_registry_api.sql) — Public registry management functions
 
-### 4. `register_list()` (`list.c`)
-Повертає `SETOF RECORD` з колонками: name, kind, dimensions count, resources count, movements_count, created_at.
+## Related Tests
 
-### 5. `register_info(name)` (`info.c`)
-Повертає JSONB з повною інформацією: структура, статистика, партиції.
-
-## Залежності
-- `core/registry` — збереження метаданих
-- `ddl` — генерація інфраструктури
-- `triggers` — генерація тригерів
-- `hash` — генерація хеш-функцій
-- `partitioning` — створення початкових партицій
-
-## SQL-файли
-- `sql/07_registry_api.sql` — SQL-обгортки для C-функцій
-
-## Тести
-- create → вся інфраструктура створена
-- create дублікат → ERROR
-- create з невалідним ім'ям → ERROR
-- alter → додавання виміру працює
-- alter → додавання ресурсу працює
-- alter → зміна high_write
-- drop → все видалено
-- drop без force з даними → ERROR
-- list → повертає всі регістри
-- info → повна інформація
-- create balance vs turnover → різна інфраструктура
+- [test/sql/02_register_create.sql](../../test/sql/02_register_create.sql) — DDL generation, table structure validation
+- [test/sql/06_register_drop.sql](../../test/sql/06_register_drop.sql) — Infrastructure teardown, force mode
+- [test/sql/07_register_list_info.sql](../../test/sql/07_register_list_info.sql) — List and info output format
+- [test/sql/18_register_alter.sql](../../test/sql/18_register_alter.sql) — Adding dimensions/resources, high_write toggle

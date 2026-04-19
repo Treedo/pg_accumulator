@@ -57,46 +57,127 @@ BEGIN
 
     -- 3. Verify balance_cache (only for balance kind)
     IF reg.kind = 'balance' THEN
-        RETURN QUERY EXECUTE format(
-            'WITH actual AS (
-                SELECT dim_hash, %s
-                FROM @extschema@.%I
-                GROUP BY dim_hash
-            ),
-            cached AS (
-                SELECT dim_hash, %s
-                FROM @extschema@.%I
-            )
-            SELECT
-                ''balance_cache''::text AS check_type,
-                COALESCE(a.dim_hash, c.dim_hash) AS dim_hash,
-                NULL::date AS period,
-                (SELECT jsonb_object_agg(k, v) FROM (
-                    SELECT * FROM jsonb_each(to_jsonb(c) - ''dim_hash'' - ''last_movement_at'' - ''last_movement_id'' - ''version'' %s)
-                ) x(k,v)) AS expected,
-                (SELECT jsonb_object_agg(k, v) FROM (
-                    SELECT * FROM jsonb_each(to_jsonb(a) - ''dim_hash'')
-                ) x(k,v)) AS actual,
-                CASE
-                    WHEN c.dim_hash IS NULL THEN ''MISSING_IN_CACHE''
-                    WHEN a.dim_hash IS NULL THEN ''ORPHAN_IN_CACHE''
-                    WHEN to_jsonb(c) - ''dim_hash'' - ''last_movement_at'' - ''last_movement_id'' - ''version'' %s
-                         = to_jsonb(a) - ''dim_hash'' THEN ''OK''
-                    ELSE ''MISMATCH''
-                END AS status
-            FROM actual a
-            FULL OUTER JOIN cached c USING (dim_hash)',
-            res_sum_cols,
-            p_name || '_movements',
-            res_cols,
-            p_name || '_balance_cache',
-            -- Remove dimension columns from comparison (they are structural, not resource)
-            (SELECT string_agg(format(' - %L', key), '') FROM jsonb_each_text(reg.dimensions)),
-            (SELECT string_agg(format(' - %L', key), '') FROM jsonb_each_text(reg.dimensions))
-        );
+        IF NOT reg.high_write THEN
+            -- Standard mode: cache should equal SUM(movements)
+            RETURN QUERY EXECUTE format(
+                'WITH actual AS (
+                    SELECT dim_hash, %s
+                    FROM @extschema@.%I
+                    GROUP BY dim_hash
+                ),
+                cached AS (
+                    SELECT dim_hash, %s
+                    FROM @extschema@.%I
+                )
+                SELECT
+                    ''balance_cache''::text AS check_type,
+                    COALESCE(a.dim_hash, c.dim_hash) AS dim_hash,
+                    NULL::date AS period,
+                    (SELECT jsonb_object_agg(k, v) FROM (
+                        SELECT * FROM jsonb_each(to_jsonb(c) - ''dim_hash'' - ''last_movement_at'' - ''last_movement_id'' - ''version'' %s)
+                    ) x(k,v)) AS expected,
+                    (SELECT jsonb_object_agg(k, v) FROM (
+                        SELECT * FROM jsonb_each(to_jsonb(a) - ''dim_hash'')
+                    ) x(k,v)) AS actual,
+                    CASE
+                        WHEN c.dim_hash IS NULL THEN ''MISSING_IN_CACHE''
+                        WHEN a.dim_hash IS NULL THEN ''ORPHAN_IN_CACHE''
+                        WHEN to_jsonb(c) - ''dim_hash'' - ''last_movement_at'' - ''last_movement_id'' - ''version'' %s
+                             = to_jsonb(a) - ''dim_hash'' THEN ''OK''
+                        ELSE ''MISMATCH''
+                    END AS status
+                FROM actual a
+                FULL OUTER JOIN cached c USING (dim_hash)',
+                res_sum_cols,
+                p_name || '_movements',
+                res_cols,
+                p_name || '_balance_cache',
+                (SELECT string_agg(format(' - %L', key), '') FROM jsonb_each_text(reg.dimensions)),
+                (SELECT string_agg(format(' - %L', key), '') FROM jsonb_each_text(reg.dimensions))
+            );
+        ELSE
+            -- High-write mode: effective balance = cache + SUM(delta buffer)
+            RETURN QUERY EXECUTE format(
+                'WITH actual AS (
+                    SELECT dim_hash, %s
+                    FROM @extschema@.%I
+                    GROUP BY dim_hash
+                ),
+                cached_combined AS (
+                    SELECT dim_hash, %s FROM (
+                        SELECT dim_hash, %s FROM @extschema@.%I
+                        UNION ALL
+                        SELECT dim_hash, %s FROM @extschema@.%I
+                    ) _all
+                    GROUP BY dim_hash
+                )
+                SELECT
+                    ''balance_cache''::text AS check_type,
+                    COALESCE(a.dim_hash, cc.dim_hash) AS dim_hash,
+                    NULL::date AS period,
+                    (SELECT jsonb_object_agg(k, v) FROM (
+                        SELECT * FROM jsonb_each(to_jsonb(cc) - ''dim_hash'')
+                    ) x(k,v)) AS expected,
+                    (SELECT jsonb_object_agg(k, v) FROM (
+                        SELECT * FROM jsonb_each(to_jsonb(a) - ''dim_hash'')
+                    ) x(k,v)) AS actual,
+                    CASE
+                        WHEN cc.dim_hash IS NULL THEN ''MISSING_IN_CACHE''
+                        WHEN a.dim_hash IS NULL THEN ''ORPHAN_IN_CACHE''
+                        WHEN to_jsonb(cc) - ''dim_hash''
+                             = to_jsonb(a) - ''dim_hash'' THEN ''OK''
+                        ELSE ''MISMATCH''
+                    END AS status
+                FROM actual a
+                FULL OUTER JOIN cached_combined cc USING (dim_hash)',
+                res_sum_cols,
+                p_name || '_movements',
+                res_sum_cols,
+                res_cols, p_name || '_balance_cache',
+                res_cols, p_name || '_balance_cache_delta'
+            );
+        END IF;
     END IF;
 
-    -- 4. Verify totals_month
+    -- 4. Verify totals_day
+    RETURN QUERY EXECUTE format(
+        'WITH actual AS (
+            SELECT dim_hash, period::date AS period, %s
+            FROM @extschema@.%I
+            GROUP BY dim_hash, period::date
+        ),
+        stored AS (
+            SELECT dim_hash, period, %s
+            FROM @extschema@.%I
+        )
+        SELECT
+            ''totals_day''::text AS check_type,
+            COALESCE(a.dim_hash, s.dim_hash) AS dim_hash,
+            COALESCE(a.period, s.period) AS period,
+            (SELECT jsonb_object_agg(k, v) FROM (
+                SELECT * FROM jsonb_each(to_jsonb(s) - ''dim_hash'' - ''period'' %s)
+            ) x(k,v)) AS expected,
+            (SELECT jsonb_object_agg(k, v) FROM (
+                SELECT * FROM jsonb_each(to_jsonb(a) - ''dim_hash'' - ''period'')
+            ) x(k,v)) AS actual,
+            CASE
+                WHEN s.dim_hash IS NULL THEN ''MISSING_IN_TOTALS''
+                WHEN a.dim_hash IS NULL THEN ''ORPHAN_IN_TOTALS''
+                WHEN to_jsonb(s) - ''dim_hash'' - ''period'' %s
+                     = to_jsonb(a) - ''dim_hash'' - ''period'' THEN ''OK''
+                ELSE ''MISMATCH''
+            END AS status
+        FROM actual a
+        FULL OUTER JOIN stored s USING (dim_hash, period)',
+        res_sum_cols,
+        p_name || '_movements',
+        res_cols,
+        p_name || '_totals_day',
+        (SELECT string_agg(format(' - %L', key), '') FROM jsonb_each_text(reg.dimensions)),
+        (SELECT string_agg(format(' - %L', key), '') FROM jsonb_each_text(reg.dimensions))
+    );
+
+    -- 5. Verify totals_month
     RETURN QUERY EXECUTE format(
         'WITH actual AS (
             SELECT dim_hash, date_trunc(''month'', period)::date AS period, %s
@@ -134,7 +215,7 @@ BEGIN
         (SELECT string_agg(format(' - %L', key), '') FROM jsonb_each_text(reg.dimensions))
     );
 
-    -- 5. Verify totals_year against totals_month
+    -- 6. Verify totals_year against totals_month
     RETURN QUERY EXECUTE format(
         'WITH actual AS (
             SELECT dim_hash, date_trunc(''year'', period)::date AS period, %s
@@ -175,14 +256,14 @@ END;
 $$;
 
 COMMENT ON FUNCTION @extschema@.register_verify(text) IS
-    'Verify data consistency: compare balance_cache, totals_month, totals_year against actual movements';
+    'Verify data consistency: compare balance_cache, totals_day, totals_month, totals_year against actual movements';
 
 
 -- ============================================================
 -- REGISTER_REBUILD_TOTALS: Full rebuild of totals from movements
--- Truncates and re-aggregates totals_month and totals_year.
+-- Truncates and re-aggregates totals_day, totals_month and totals_year.
 --
--- Returns: number of rebuilt rows (month + year)
+-- Returns: number of rebuilt rows (day + month + year)
 -- ============================================================
 CREATE OR REPLACE FUNCTION @extschema@.register_rebuild_totals(p_name text)
 RETURNS int
@@ -196,6 +277,7 @@ DECLARE
     first_res    boolean := true;
     dim_key      text;
     res_key      text;
+    day_count    int;
     month_count  int;
     year_count   int;
 BEGIN
@@ -224,7 +306,26 @@ BEGIN
         first_res := false;
     END LOOP;
 
-    -- 3. Truncate and rebuild totals_month
+    -- 3. Bypass protection triggers for rebuild
+    PERFORM set_config('pg_accumulator.allow_internal', 'on', true);
+
+    -- 4. Truncate and rebuild totals_day
+    EXECUTE format('TRUNCATE @extschema@.%I', p_name || '_totals_day');
+
+    EXECUTE format(
+        'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
+         SELECT dim_hash, period::date, %s, %s
+         FROM @extschema@.%I
+         GROUP BY dim_hash, period::date, %s',
+        p_name || '_totals_day',
+        dim_cols, res_cols,
+        dim_cols, res_sum_cols,
+        p_name || '_movements',
+        dim_cols
+    );
+    GET DIAGNOSTICS day_count = ROW_COUNT;
+
+    -- 5. Truncate and rebuild totals_month from totals_day
     EXECUTE format('TRUNCATE @extschema@.%I', p_name || '_totals_month');
 
     EXECUTE format(
@@ -235,12 +336,12 @@ BEGIN
         p_name || '_totals_month',
         dim_cols, res_cols,
         dim_cols, res_sum_cols,
-        p_name || '_movements',
+        p_name || '_totals_day',
         dim_cols
     );
     GET DIAGNOSTICS month_count = ROW_COUNT;
 
-    -- 4. Truncate and rebuild totals_year from totals_month
+    -- 6. Truncate and rebuild totals_year from totals_month
     EXECUTE format('TRUNCATE @extschema@.%I', p_name || '_totals_year');
 
     EXECUTE format(
@@ -256,12 +357,15 @@ BEGIN
     );
     GET DIAGNOSTICS year_count = ROW_COUNT;
 
-    RETURN month_count + year_count;
+    -- Reset protection bypass
+    PERFORM set_config('pg_accumulator.allow_internal', '', true);
+
+    RETURN day_count + month_count + year_count;
 END;
 $$;
 
 COMMENT ON FUNCTION @extschema@.register_rebuild_totals(text) IS
-    'Rebuild totals_month and totals_year from movements data';
+    'Rebuild totals_day, totals_month and totals_year from movements data';
 
 
 -- ============================================================
@@ -317,6 +421,9 @@ BEGIN
         first_res := false;
     END LOOP;
 
+    -- 3. Bypass protection triggers for rebuild
+    PERFORM set_config('pg_accumulator.allow_internal', 'on', true);
+
     IF p_dim_hash IS NULL THEN
         -- Full rebuild
         EXECUTE format('TRUNCATE @extschema@.%I', p_name || '_balance_cache');
@@ -369,6 +476,10 @@ BEGIN
     END IF;
 
     GET DIAGNOSTICS rebuilt = ROW_COUNT;
+
+    -- Reset protection bypass
+    PERFORM set_config('pg_accumulator.allow_internal', '', true);
+
     RETURN rebuilt;
 END;
 $$;
@@ -390,12 +501,14 @@ DECLARE
     v_movements       bigint := 0;
     v_partitions      int    := 0;
     v_cache_rows      bigint := 0;
+    v_day_rows        bigint := 0;
     v_month_rows      bigint := 0;
     v_year_rows       bigint := 0;
     v_delta_pending   bigint := 0;
     v_last_delta      timestamptz;
     v_table_sizes     jsonb;
     v_movements_size  text;
+    v_day_size        text;
     v_month_size      text;
     v_year_size       text;
     v_cache_size      text;
@@ -437,6 +550,13 @@ BEGIN
     END IF;
 
     -- 4. Count totals rows
+    BEGIN
+        EXECUTE format('SELECT count(*) FROM @extschema@.%I',
+            p_name || '_totals_day') INTO v_day_rows;
+    EXCEPTION WHEN undefined_table THEN
+        v_day_rows := 0;
+    END;
+
     BEGIN
         EXECUTE format('SELECT count(*) FROM @extschema@.%I',
             p_name || '_totals_month') INTO v_month_rows;
@@ -485,6 +605,14 @@ BEGIN
 
     BEGIN
         SELECT pg_size_pretty(pg_total_relation_size(
+            format('@extschema@.%I', p_name || '_totals_day')::regclass))
+            INTO v_day_size;
+    EXCEPTION WHEN OTHERS THEN
+        v_day_size := '0 bytes';
+    END;
+
+    BEGIN
+        SELECT pg_size_pretty(pg_total_relation_size(
             format('@extschema@.%I', p_name || '_totals_month')::regclass))
             INTO v_month_size;
     EXCEPTION WHEN OTHERS THEN
@@ -501,6 +629,7 @@ BEGIN
 
     v_table_sizes := jsonb_build_object(
         'movements', v_movements_size,
+        'totals_day', v_day_size,
         'totals_month', v_month_size,
         'totals_year', v_year_size
     );
@@ -521,6 +650,7 @@ BEGIN
         'movements_count',      v_movements,
         'partitions_count',     v_partitions,
         'cache_rows',           v_cache_rows,
+        'totals_day_rows',      v_day_rows,
         'totals_month_rows',    v_month_rows,
         'totals_year_rows',     v_year_rows,
         'delta_buffer_pending', v_delta_pending,
@@ -534,3 +664,72 @@ $$;
 
 COMMENT ON FUNCTION @extschema@.register_stats(text) IS
     'Collect register statistics: row counts, partition count, table sizes';
+
+
+-- ============================================================
+-- _RECOVERY_CHECK: Post-crash consistency recovery
+-- Called by bgworker on startup. For each high_write balance register,
+-- checks if the UNLOGGED delta buffer was lost (truncated by crash)
+-- and rebuilds balance_cache from movements if needed.
+--
+-- Returns: number of registers that were rebuilt
+-- ============================================================
+CREATE OR REPLACE FUNCTION @extschema@._recovery_check()
+RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE
+    reg          record;
+    v_delta_cnt  bigint;
+    v_cache_cnt  bigint;
+    v_mov_cnt    bigint;
+    v_mismatch   bigint;
+    rebuilt      int := 0;
+BEGIN
+    FOR reg IN
+        SELECT r.name FROM @extschema@._registers r
+        WHERE r.high_write = true AND r.kind = 'balance'
+        ORDER BY r.name
+    LOOP
+        -- Check if delta buffer is empty (possible crash truncation)
+        EXECUTE format('SELECT count(*) FROM @extschema@.%I',
+            reg.name || '_balance_cache_delta') INTO v_delta_cnt;
+
+        -- Only investigate if delta buffer is empty (normal state after merge too,
+        -- so also check for actual mismatch)
+        IF v_delta_cnt = 0 THEN
+            EXECUTE format('SELECT count(*) FROM @extschema@.%I',
+                reg.name || '_balance_cache') INTO v_cache_cnt;
+            EXECUTE format('SELECT count(*) FROM @extschema@.%I',
+                reg.name || '_movements') INTO v_mov_cnt;
+
+            -- Quick sanity: if movements exist but cache is empty, rebuild
+            IF v_mov_cnt > 0 AND v_cache_cnt = 0 THEN
+                PERFORM @extschema@.register_rebuild_cache(reg.name);
+                rebuilt := rebuilt + 1;
+                RAISE LOG 'pg_accumulator recovery: rebuilt cache for register "%" (missing cache)',
+                    reg.name;
+                CONTINUE;
+            END IF;
+
+            -- Check for actual mismatch count (lightweight: just count mismatches)
+            IF v_cache_cnt > 0 THEN
+                SELECT count(*) INTO v_mismatch
+                FROM @extschema@.register_verify(reg.name)
+                WHERE check_type = 'balance_cache' AND status != 'OK';
+
+                IF v_mismatch > 0 THEN
+                    PERFORM @extschema@.register_rebuild_cache(reg.name);
+                    rebuilt := rebuilt + 1;
+                    RAISE LOG 'pg_accumulator recovery: rebuilt cache for register "%" (% mismatches)',
+                        reg.name, v_mismatch;
+                END IF;
+            END IF;
+        END IF;
+    END LOOP;
+
+    RETURN rebuilt;
+END;
+$$;
+
+COMMENT ON FUNCTION @extschema@._recovery_check() IS
+    'Post-crash recovery: detect and rebuild inconsistent high_write balance caches';

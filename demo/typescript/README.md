@@ -1,40 +1,46 @@
 # pg_accumulator — TypeScript Demo
 
-Демонстрація розширення `pg_accumulator` у вигляді простого **фінансового трекера**.
+A demonstration of the `pg_accumulator` extension in the form of a simple **financial tracker**.
 
-## Що демонструє
+## What It Demonstrates
 
-| Функція | Опис |
+| Feature | Description |
 |---|---|
-| Поточний баланс | Карточки з сумою по кожному рахунку (`balance_cache`) |
-| Нова транзакція | `accum.register_post()` — провести запис |
-| Скасування | `accum.register_unpost()` — скасувати/видалити запис |
-| Залишок на дату | `accum.finance_balance()` — точний стан на будь-яку дату |
-| Список рухів | Таблиця останніх 50 транзакцій |
+| Current balance | Cards showing the sum per account (`balance_cache`) |
+| New transaction | `accum.register_post()` — post a movement |
+| Cancellation | `accum.register_unpost()` — cancel/delete a movement |
+| Balance at date | `accum.finance_balance()` — exact state at any date |
+| Movement list | Table of the last 50 transactions |
 
-## Стек
+## Stack
 
 - **Node.js 20** + **Express 4** (TypeScript)
-- **pg** — підключення до PostgreSQL
-- Статичний `index.html` із Vanilla JS (без фреймворків)
+- **pg** — PostgreSQL driver
+- Static `index.html` with Vanilla JS (no frameworks)
 
-## Запуск
+## Getting Started
 
 ```bash
 cd demo/typescript
 docker compose up --build
 ```
 
-Відкрити у браузері: **http://localhost:3001**
+Open in browser: **http://localhost:3001**
 
-> Дані БД зберігаються у volume `pgdata_ts`. Для чистого старту:
+> Database data is stored in the `pgdata_ts` volume. For a clean start:
 > ```bash
 > docker compose down -v && docker compose up --build
 > ```
 
-## Порти
+## Ports
 
-| Сервіс | Порт |
+| Service | Port |
 |---|---|
-| Веб-додаток | `3001` |
+| Web app | `3001` |
 | PostgreSQL | `5435` |
+
+## Shutdown
+
+```bash
+docker compose down -v
+```

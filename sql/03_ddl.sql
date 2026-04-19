@@ -87,7 +87,7 @@ END;
 $$;
 
 -- ============================================================
--- CREATE TOTALS TABLES (monthly + yearly aggregations)
+-- CREATE TOTALS TABLES (daily + monthly + yearly aggregations)
 -- ============================================================
 CREATE OR REPLACE FUNCTION @extschema@._ddl_create_totals_tables(
     p_name       text,
@@ -101,6 +101,20 @@ DECLARE
 BEGIN
     col_defs := @extschema@._build_dim_columns(p_dimensions);
     res_defs := @extschema@._build_res_columns(p_resources);
+
+    -- totals_day: daily turnover aggregation
+    EXECUTE format(
+        'CREATE TABLE @extschema@.%I (
+            dim_hash       bigint        NOT NULL,
+            period         date          NOT NULL
+            %s
+            %s,
+            PRIMARY KEY (dim_hash, period)
+        )',
+        p_name || '_totals_day',
+        col_defs,
+        res_defs
+    );
 
     -- totals_month: monthly turnover aggregation
     EXECUTE format(
@@ -245,6 +259,8 @@ BEGIN
     EXECUTE format('DROP TABLE IF EXISTS @extschema@.%I CASCADE',
         p_name || '_movements');
     EXECUTE format('DROP TABLE IF EXISTS @extschema@.%I CASCADE',
+        p_name || '_totals_day');
+    EXECUTE format('DROP TABLE IF EXISTS @extschema@.%I CASCADE',
         p_name || '_totals_month');
     EXECUTE format('DROP TABLE IF EXISTS @extschema@.%I CASCADE',
         p_name || '_totals_year');
@@ -260,6 +276,10 @@ BEGIN
         '_trg_' || p_name || '_after_insert');
     EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
         '_trg_' || p_name || '_after_delete');
+    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+        '_trg_' || p_name || '_block_update');
+    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+        '_trg_' || p_name || '_protect_derived');
 
     -- Drop read functions (balance/turnover/movements)
     PERFORM @extschema@._drop_read_functions(p_name);

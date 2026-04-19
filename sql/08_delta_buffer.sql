@@ -57,7 +57,10 @@ BEGIN
         first_res := false;
     END LOOP;
 
-    -- 3. Atomic merge: DELETE old deltas → aggregate → UPDATE cache
+    -- 3. Bypass protection triggers for internal merge
+    PERFORM set_config('pg_accumulator.allow_internal', 'on', true);
+
+    -- 4. Atomic merge: DELETE old deltas → aggregate → UPDATE cache
     EXECUTE format(
         'WITH consumed AS (
             DELETE FROM @extschema@.%I
@@ -88,6 +91,10 @@ BEGIN
     ) USING p_max_age, p_batch_size;
 
     GET DIAGNOSTICS consumed = ROW_COUNT;
+
+    -- Reset protection bypass
+    PERFORM set_config('pg_accumulator.allow_internal', '', true);
+
     RETURN consumed;
 END;
 $$;
@@ -169,6 +176,9 @@ BEGIN
         first_res := false;
     END LOOP;
 
+    -- Bypass protection triggers for internal flush
+    PERFORM set_config('pg_accumulator.allow_internal', 'on', true);
+
     -- Flush ALL deltas (no age filter, no batch limit)
     EXECUTE format(
         'WITH consumed AS (
@@ -193,6 +203,10 @@ BEGIN
     );
 
     GET DIAGNOSTICS consumed = ROW_COUNT;
+
+    -- Reset protection bypass
+    PERFORM set_config('pg_accumulator.allow_internal', '', true);
+
     RETURN consumed;
 END;
 $$;

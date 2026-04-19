@@ -3,11 +3,17 @@
 -- This file runs BEFORE any test files
 
 CREATE EXTENSION IF NOT EXISTS pgtap;
-CREATE SCHEMA IF NOT EXISTS accum;
 
--- ============================================================
--- EMULATED EXTENSION FUNCTIONS (prototype layer)
--- These SQL functions emulate the C extension API.
--- They will be replaced by CREATE EXTENSION pg_accumulator
--- once the C code is built. Tests remain the same.
--- ============================================================
+-- Try to load the compiled extension first (available in Docker builds).
+-- If the extension is installed, this creates the accum schema and all functions.
+-- The remaining setup files (01, 02) use CREATE IF NOT EXISTS / CREATE OR REPLACE
+-- and act as a fallback for local testing without the C extension.
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_accumulator;
+    RAISE NOTICE 'pg_accumulator extension loaded — using compiled version';
+EXCEPTION WHEN OTHERS THEN
+    CREATE SCHEMA IF NOT EXISTS accum;
+    RAISE NOTICE 'pg_accumulator extension not available — using emulated SQL functions';
+END;
+$$;

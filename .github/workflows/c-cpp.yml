@@ -7,20 +7,92 @@ on:
     branches: [ "main" ]
 
 jobs:
-  test:
-
+  build:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v5
 
-    - name: Run pgTAP tests via Docker
-      run: |
-        docker compose -f docker/docker-compose.test.yml up \
-          --build \
-          --abort-on-container-exit \
-          --exit-code-from test-runner
+      - name: Install PostgreSQL build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates wget gnupg lsb-release
 
-    - name: Tear down Docker
-      if: always()
-      run: docker compose -f docker/docker-compose.test.yml down -v --remove-orphans
+          # Find available postgresql-server-dev-N packages and install the highest version available
+          available_versions=$(apt-cache pkgnames 'postgresql-server-dev-*' \
+            | grep -E '^postgresql-server-dev-[0-9]+$' \
+            | sed -E 's/^postgresql-server-dev-([0-9]+)$/\1/' \
+            | sort -nr)
+
+          if [ -n "$available_versions" ]; then
+            chosen=$(echo "$available_versions" | head -n1)
+            echo "Installing postgresql-server-dev-$chosen"
+            sudo apt-get install -y --no-install-recommends postgresql-server-dev-"$chosen"
+          else
+            echo "No numbered postgresql-server-dev packages found in default repos"
+            for v in 16 15 14 13 12; do
+              if apt-cache show postgresql-server-dev-$v >/dev/null 2>&1; then
+                echo "Found postgresql-server-dev-$v in apt; installing"
+                sudo apt-get install -y --no-install-recommends postgresql-server-dev-$v
+                break
+              fi
+            done
+          fi
+
+          if ! command -v pg_config >/dev/null 2>&1; then
+            echo "No suitable postgresql-server-dev package found in default repos — adding PGDG repository"
+            wget -qO - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /etc/apt/trusted.gpg.d/pgdg.asc >/dev/null
+            echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+            sudo apt-get update
+
+            for v in 16 15 14 13 12; do
+              if apt-cache show postgresql-server-dev-$v >/dev/null 2>&1; then
+                echo "Installing postgresql-server-dev-$v from PGDG"
+                sudo apt-get install -y --no-install-recommends postgresql-server-dev-$v
+                break
+              fi
+            done
+          fi
+
+          if ! command -v pg_config >/dev/null 2>&1; then
+            echo "pg_config not found after installing dev packages — aborting"
+            apt-cache policy postgresql-common postgresql-server-dev-* || true
+            exit 1
+          fi
+          pg_config --version
+
+      - name: Build extension with PGXS
+        run: |
+          export PG_CONFIG=$(which pg_config)
+          echo "Using PG_CONFIG=$PG_CONFIG"
+          pg_config --version
+          echo "Installed PostgreSQL packages:"
+          dpkg -l 'postgresql-*' postgresql-common || true
+          make clean
+          make USE_PGXS=1 PG_CONFIG="$PG_CONFIG"
+
+      - name: Stage extension install
+        run: |
+          export PG_CONFIG=$(which pg_config)
+          make install USE_PGXS=1 PG_CONFIG="$PG_CONFIG" DESTDIR="$GITHUB_WORKSPACE/install"
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Show Docker Compose version
+        run: docker compose version
+
+      - name: Run Docker-based pgTAP suite
+        run: docker compose -f docker/docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test-runner
+
+      - name: Dump Docker logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.test.yml logs --no-color
+
+      - name: Tear down test stack
+        if: always()
+        run: docker compose -f docker/docker-compose.test.yml down -v --remove-orphans

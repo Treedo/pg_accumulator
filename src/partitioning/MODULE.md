@@ -1,111 +1,45 @@
-# Модуль: Partitioning (Управління партиціями)
+# Module: Partitioning
 
-## Призначення
-Автоматичне створення, управління та обслуговування партицій таблиці рухів (movements). Забезпечує partition pruning при запитах по періоду та контрольоване зростання таблиці.
+**Purpose:** Automatic creation, management, and maintenance of range partitions on the movements table.
 
-## Файли
-- `partition_manager.c` — Основна логіка управління партиціями
-- `auto_create.c` — Автоматичне створення партицій наперед
+## Files
 
-## Відповідальність
+- `partition_manager.c` — Partition creation, detachment, listing
+- `auto_create.c` — Proactive partition creation (background worker) and lazy creation (trigger fallback)
 
-### 1. Створення партицій при `register_create()` (`partition_manager.c`)
+## Responsibilities
 
-Стратегії партиціювання за `partition_by`:
-```
-'day'     → одна партиція на день     (movements_2026_04_18)
-'month'   → одна партиція на місяць   (movements_2026_04)
-'quarter' → одна партиція на квартал  (movements_2026_q1)
-'year'    → одна партиція на рік      (movements_2026)
-```
+### 1. Partition Creation at `register_create()`
 
-Початкове створення:
-```sql
--- partition_by = 'month'
-CREATE TABLE accum.inventory_movements_2026_04
-    PARTITION OF accum.inventory_movements
-    FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');
+Creates partitions for the current period and `partitions_ahead` future periods, plus a default partition for any data outside defined ranges. Granularity: `day`, `month`, `quarter`, `year`.
 
--- + N місяців наперед (pg_accumulator.partitions_ahead)
-CREATE TABLE accum.inventory_movements_2026_05 ...
-CREATE TABLE accum.inventory_movements_2026_06 ...
-CREATE TABLE accum.inventory_movements_2026_07 ...
+### 2. Proactive Partition Creation (Background Worker)
 
--- Default partition (всі інші)
-CREATE TABLE accum.inventory_movements_default
-    PARTITION OF accum.inventory_movements DEFAULT;
-```
+The background worker periodically checks all registers and creates missing future partitions. This ensures that INSERT into movements never fails due to a missing partition.
 
-### 2. Автоматичне створення наперед (`auto_create.c`)
+### 3. Lazy Partition Creation (Trigger Fallback)
 
-Background worker або trigger при INSERT:
-```
-1. Перевірити: існує партиція для period + partitions_ahead?
-2. Якщо ні → CREATE PARTITION
-3. Lock: advisory lock для уникнення конкурентного створення
-```
+If a movement targets a period without a partition (and the background worker hasn't created it yet), the system falls back to the default partition.
 
-Два режими:
-- **Eager** (background worker): періодично створює партиції наперед
-- **Lazy** (trigger): створює при першому INSERT в новий період
+### 4. Manual Partition Management
 
-### 3. `register_create_partitions(name, ahead)` (`partition_manager.c`)
+- `register_create_partitions(name, ahead)` — create the next N partitions manually
+- `register_detach_partitions(name, older_than)` — detach old partitions (data is not deleted, just unattached from the parent table)
+- `register_partitions(name)` — list all partitions with metadata (row count, size)
 
-Ручне створення партицій:
-```sql
-SELECT register_create_partitions('inventory', ahead := '6 months');
--- Створить партиції на 6 місяців вперед від поточної дати
-```
+### 5. Naming Convention
 
-### 4. `register_detach_partitions(name, older_than)` (`partition_manager.c`)
+Partition names follow the pattern: `<register>_movements_<suffix>` where suffix is:
+- Daily: `YYYY_MM_DD`
+- Monthly: `YYYY_MM`
+- Quarterly: `YYYY_qN`
+- Yearly: `YYYY`
 
-Від'єднання старих партицій (для архівації або видалення):
-```sql
-SELECT register_detach_partitions('inventory', older_than := '2 years');
+## SQL Sources
 
--- Від'єднує:
-ALTER TABLE accum.inventory_movements
-    DETACH PARTITION accum.inventory_movements_2024_01;
--- ...
--- Партиції не видаляються, лише від'єднуються
--- Можна DROP TABLE окремо або переміст в archive
-```
+- [sql/09_partitioning.sql](../../sql/09_partitioning.sql) — Partition management functions
 
-### 5. `register_partitions(name)` (`partition_manager.c`)
+## Related Tests
 
-Список партицій з метаданими:
-```sql
-SELECT * FROM register_partitions('inventory');
--- partition_name       | from_date  | to_date    | rows    | size
--- ---------------------+------------+------------+---------+--------
--- inventory_mv_2026_01 | 2026-01-01 | 2026-02-01 | 45,231  | 12 MB
--- inventory_mv_2026_02 | 2026-02-01 | 2026-03-01 | 52,108  | 14 MB
-```
-
-### 6. Іменування партицій
-```
-Формат: <register>_movements_<period_suffix>
-
-period_suffix залежно від partition_by:
-  'day'     → YYYY_MM_DD  (2026_04_18)
-  'month'   → YYYY_MM     (2026_04)
-  'quarter' → YYYY_qN     (2026_q2)
-  'year'    → YYYY        (2026)
-```
-
-## Залежності
-- `core/registry` — метадані (partition_by)
-- `bgworker` — для eager режиму автоматичного створення
-
-## SQL-файли
-- `sql/09_partitioning.sql` — Функції управління партиціями
-
-## Тести
-- Створення регістру → початкові партиції створені
-- INSERT в новий період → партиція створена автоматично
-- Partition pruning: запит по period → скануються тільки релевантні партиції (EXPLAIN)
-- Detach → партиція від'єднана, рухи недоступні
-- create_partitions наперед → партиції створені
-- Різні partition_by → коректні діапазони
-- Default partition → ловить дані поза діапазоном
-- Конкурентне створення партицій → advisory lock запобігає дублюванню
+- [test/sql/19_partitioning.sql](../../test/sql/19_partitioning.sql) — Partition creation, detachment, listing
+- [test/sql/02_register_create.sql](../../test/sql/02_register_create.sql) — Initial partition creation during register setup

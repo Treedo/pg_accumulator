@@ -1,0 +1,23 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Application table – products catalog
+model Product {
+  id    Int    @id @default(autoincrement())
+  name  String @db.VarChar(200)
+  sku   String @unique @db.VarChar(50)
+  price Decimal @db.Decimal(12, 2) @default(0)
+}
+
+/// Application table – warehouses
+model Warehouse {
+  id   Int    @id @default(autoincrement())
+  name String @db.VarChar(200)
+  city String @db.VarChar(100)
+}

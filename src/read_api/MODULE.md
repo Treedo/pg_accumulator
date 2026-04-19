@@ -1,125 +1,43 @@
-# Модуль: Read API (Читання даних)
+# Module: Read API
 
-## Призначення
-Функції для отримання залишків, оборотів та рухів з регістрів накопичення. Оптимізовані запити з використанням ієрархії підсумків для швидкого обчислення.
+**Purpose:** Query functions for balances, turnovers, and movements with hierarchical optimization via the totals layer.
 
-## Файли
-- `balance.c` — Генерація та реалізація `<register>_balance()`
-- `turnover.c` — Генерація та реалізація `<register>_turnover()`
-- `movements.c` — Генерація та реалізація `<register>_movements()`
+## Files
 
-## Відповідальність
+- `balance.c` — `<register>_balance()` implementation
+- `turnover.c` — `<register>_turnover()` implementation
+- `movements.c` — `<register>_movements()` implementation
 
-### 1. `<register>_balance(dimensions, at_date)` (`balance.c`)
+## Responsibilities
 
-Повертає залишок ресурсів. Доступна тільки для `kind='balance'`.
+### 1. `<register>_balance(dimensions, at_date)` — Balance Query
 
-**Два режими:**
+- **Current balance (no `at_date`):** O(1) direct read from `balance_cache`. In high-write mode, adds pending deltas via `UNION ALL` from the delta buffer.
+- **Historical balance (`at_date` specified):** Uses hierarchical aggregation — sums complete years from `totals_year`, complete months from `totals_month`, remaining days from `totals_day`, and any partial-period movements. Maximum rows scanned: ~20 years + ~11 months + ~31 days ≈ 62 rows, regardless of total data volume.
+- **Partial dimensions:** When not all dimensions are specified, aggregates across omitted dimensions.
+- **No dimensions:** Returns the total balance across the entire register.
 
-#### Поточний залишок (at_date IS NULL)
-```
-SELECT <resources>
-FROM accum.<register>_balance_cache
-WHERE dim_hash = _hash(dimensions)
-```
-- Складність: O(1) — один lookup в cache
-- Час: ~0.1ms
+### 2. `<register>_turnover(from_date, to_date, dimensions, group_by)` — Turnover Query
 
-Якщо `dimensions` задано частково (не всі виміри):
-```
-SELECT SUM(<res1>), SUM(<res2>)
-FROM accum.<register>_balance_cache
-WHERE <задані виміри> = <значення>
-```
-- Агрегація по наявних індексах
+- Computes net resource change within [from_date, to_date]
+- Optimizes by reading from `totals_month` / `totals_year` for complete periods, falling back to `totals_day` or raw movements only for partial boundary periods
+- `group_by` parameter returns SETOF JSONB, one object per distinct group value
+- Supports partial dimension filtering
 
-#### Залишок на дату (at_date IS NOT NULL)
-```
-Алгоритм "складання ієрархії":
+### 3. `<register>_movements(recorder, from_date, to_date, dimensions)` — Movement Listing
 
-1. SUM(totals_year WHERE period < date_trunc('year', at_date))
-   → Усі повні роки до at_date
+- Direct filtered access to the movements table
+- Uses partition pruning on `period` for efficient range scans
+- Supports filtering by `recorder`, date range, and/or dimension values
+- Returns SETOF JSONB
 
-2. + SUM(totals_month WHERE period >= date_trunc('year', at_date)
-                         AND period < date_trunc('month', at_date))
-   → Повні місяці поточного року до at_date
+## SQL Sources
 
-3. + SUM(movements WHERE period >= date_trunc('month', at_date)
-                      AND period <= at_date)
-   → Окремі рухи поточного місяця до at_date
+- [sql/06_read_api.sql](../../sql/06_read_api.sql) — Internal generic functions (`_balance_internal`, `_turnover_internal`) and per-register wrapper generation
 
-Максимум сканованих рядків: ~20 + ~11 + ~31 = ~62
-```
+## Related Tests
 
-#### High-write mode — доповнення
-```sql
--- Поточний залишок = cache + pending deltas
-SELECT
-    c.<res1> + COALESCE(d.<res1>, 0),
-    c.<res2> + COALESCE(d.<res2>, 0)
-FROM accum.<register>_balance_cache c
-LEFT JOIN (
-    SELECT dim_hash, SUM(<res1>) AS <res1>, SUM(<res2>) AS <res2>
-    FROM accum.<register>_balance_cache_delta
-    WHERE dim_hash = _hash
-    GROUP BY dim_hash
-) d USING (dim_hash)
-WHERE c.dim_hash = _hash;
-```
-
-### 2. `<register>_turnover(from_date, to_date, dimensions, group_by)` (`turnover.c`)
-
-Повертає обороти (нетто) за період.
-
-**Алгоритм оптимізації:**
-```
-1. Повні місяці в діапазоні → з totals_month
-2. Неповні місяці (початок/кінець) → з movements
-3. Якщо діапазон >= 1 рік → використати totals_year для повних років
-
-Приклад: turnover 15 лютого — 20 квітня
-  → movements 15-28 лютого (неповний місяць)
-  → totals_month березень (повний місяць)
-  → movements 1-20 квітня (неповний місяць)
-```
-
-**group_by:**
-- Якщо вказано `group_by := '{"product"}'`, результат розгортається по вказаному виміру
-- Генерується `GROUP BY product_id` у фінальному запиті
-
-### 3. `<register>_movements(recorder, from_date, to_date, dimensions)` (`movements.c`)
-
-Повертає рухи з фільтрацією. Пряма вибірка з таблиці movements з фільтрами.
-
-**Фільтри:**
-```sql
-SELECT * FROM accum.<register>_movements
-WHERE TRUE
-  AND (recorder = $1 OR $1 IS NULL)           -- фільтр по документу
-  AND (period >= $2 OR $2 IS NULL)             -- фільтр по початку
-  AND (period <= $3 OR $3 IS NULL)             -- фільтр по кінцю
-  AND (dim_hash = _hash($4) OR $4 IS NULL)    -- фільтр по вимірах
-ORDER BY period, recorded_at;
-```
-
-## Залежності
-- `core/registry` — метадані для визначення структури
-- `hash` — для обчислення dim_hash при фільтрації
-- `delta_buffer` — для high-write mode читання
-
-## SQL-файли
-- `sql/06_read_api.sql` — Шаблони генерації функцій читання
-
-## Тести
-- balance() поточний → повертає правильний залишок
-- balance() на дату → ієрархічне обчислення коректне
-- balance() з частковими вимірами → агрегація
-- balance() без фільтрів → загальний залишок
-- balance() для turnover-регістру → ERROR
-- turnover() за повний місяць → з totals_month
-- turnover() за неповний місяць → z movements
-- turnover() з group_by → розгортання по виміру
-- movements() по recorder → фільтрує правильно
-- movements() по періоду → partition pruning працює
-- balance() в high-write mode → cache + deltas
-- Продуктивність: balance() < 1ms на великому dataset
+- [test/sql/09_balance_cache.sql](../../test/sql/09_balance_cache.sql) — Balance reads, edge cases (11 assertions)
+- [test/sql/11_turnover_register.sql](../../test/sql/11_turnover_register.sql) — Turnover-only registers, period queries
+- [test/sql/14_end_to_end_warehouse.sql](../../test/sql/14_end_to_end_warehouse.sql) — Full warehouse balance/turnover scenario
+- [test/sql/15_end_to_end_finance.sql](../../test/sql/15_end_to_end_finance.sql) — Full financial accounting scenario
