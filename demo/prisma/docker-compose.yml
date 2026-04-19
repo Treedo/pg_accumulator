@@ -1,0 +1,41 @@
+services:
+  postgres:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+    container_name: pg_accumulator_prisma_db
+    ports:
+      - "5436:5432"
+    environment:
+      POSTGRES_DB: accumulator_dev
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev_password
+    volumes:
+      - pgdata_prisma:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/02-demo-init.sql:ro
+    command: >
+      postgres
+        -c shared_preload_libraries='pg_accumulator'
+        -c pg_accumulator.background_workers=1
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d accumulator_dev"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  app:
+    build:
+      context: ../..
+      dockerfile: demo/prisma/Dockerfile
+    container_name: pg_accumulator_prisma_app
+    ports:
+      - "3002:3000"
+    environment:
+      DATABASE_URL: "postgresql://dev:dev_password@postgres:5432/accumulator_dev"
+      PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata_prisma:

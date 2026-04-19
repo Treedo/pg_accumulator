@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pg_accumulator + Prisma Demo — Склад</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #eef7f2; color: #102a43; padding: 20px; }
+        h1 { margin-bottom: 8px; color: #0f172a; }
+        .subtitle { color: #334e68; margin-bottom: 24px; font-size: 14px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+        .card { background: #ffffff; border-radius: 16px; padding: 24px; box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08); }
+        .card h2 { margin-bottom: 14px; font-size: 18px; color: #10375c; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #d8e3ec; }
+        th { background: #f0fbf7; font-weight: 700; color: #0f5132; }
+        tr:hover { background: #f4fcfa; }
+        .form-row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .form-row select, .form-row input { padding: 10px 12px; border: 1px solid #ced9e1; border-radius: 8px; font-size: 14px; background: #f8fbfc; }
+        .form-row input { width: 120px; }
+        button { padding: 10px 16px; background: #0f766e; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background 0.2s ease; }
+        button:hover { background: #115e59; }
+        button.danger { background: #dc2626; }
+        button.danger:hover { background: #b91c1c; }
+        .status { margin-top: 10px; font-size: 13px; color: #334e68; min-height: 18px; }
+        .status.error { color: #b91c1c; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+        .badge-pos { background: #d9f7e8; color: #064e3b; }
+        .badge-neg { background: #fee2e2; color: #991b1b; }
+        .tabs { display: flex; gap: 6px; margin-bottom: 20px; }
+        .tab { padding: 10px 18px; background: #d9f7ec; border: none; border-radius: 12px 12px 0 0; cursor: pointer; font-size: 13px; color: #0f5132; }
+        .tab.active { background: #ffffff; font-weight: 700; box-shadow: 0 -4px 18px rgba(15, 23, 42, 0.08); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body>
+    <h1>📦 Складський облік</h1>
+    <p class="subtitle">Демо: <strong>prisma-accumulator</strong> + pg_accumulator — баланси та рухи товарів</p>
+
+    <div class="tabs">
+        <button class="tab active" data-tab="balances">Залишки</button>
+        <button class="tab" data-tab="operations">Операції</button>
+        <button class="tab" data-tab="movements">Історія рухів</button>
+        <button class="tab" data-tab="registers">Реєстри</button>
+    </div>
+
+    <!-- Balances Tab -->
+    <div class="tab-content active" id="tab-balances">
+        <div class="card">
+            <h2>Поточні залишки на складах</h2>
+            <button onclick="loadBalances()">🔄 Оновити</button>
+            <table id="balances-table" style="margin-top: 12px;">
+                <thead><tr><th>Склад</th><th>Товар</th><th>Кількість</th><th>Вартість</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Operations Tab -->
+    <div class="tab-content" id="tab-operations">
+        <div class="grid">
+            <div class="card">
+                <h2>➕ Надходження товару</h2>
+                <div class="form-row">
+                    <select id="receipt-warehouse"></select>
+                    <select id="receipt-product"></select>
+                </div>
+                <div class="form-row">
+                    <input type="number" id="receipt-qty" placeholder="Кількість" min="1">
+                    <input type="number" id="receipt-cost" placeholder="Вартість" min="0" step="0.01">
+                    <button onclick="postReceipt()">Оприбуткувати</button>
+                </div>
+                <div class="status" id="receipt-status"></div>
+            </div>
+
+            <div class="card">
+                <h2>➖ Відвантаження товару</h2>
+                <div class="form-row">
+                    <select id="shipment-warehouse"></select>
+                    <select id="shipment-product"></select>
+                </div>
+                <div class="form-row">
+                    <input type="number" id="shipment-qty" placeholder="Кількість" min="1">
+                    <input type="number" id="shipment-cost" placeholder="Вартість" min="0" step="0.01">
+                    <button onclick="postShipment()">Відвантажити</button>
+                </div>
+                <div class="status" id="shipment-status"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🚫 Скасування операції</h2>
+            <div class="form-row">
+                <input type="text" id="unpost-recorder" placeholder="Recorder ID (напр. receipt:17...)" style="width: 300px;">
+                <button class="danger" onclick="doUnpost()">Скасувати</button>
+            </div>
+            <div class="status" id="unpost-status"></div>
+        </div>
+    </div>
+
+    <!-- Movements Tab -->
+    <div class="tab-content" id="tab-movements">
+        <div class="card">
+            <h2>Останні рухи (movements)</h2>
+            <button onclick="loadMovements()">🔄 Оновити</button>
+            <table id="movements-table" style="margin-top: 12px;">
+                <thead><tr><th>ID</th><th>Recorder</th><th>Період</th><th>Склад</th><th>Товар</th><th>Кількість</th><th>Вартість</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Registers Tab -->
+    <div class="tab-content" id="tab-registers">
+        <div class="card">
+            <h2>Зареєстровані регістри накопичення</h2>
+            <button onclick="loadRegisters()">🔄 Оновити</button>
+            <table id="registers-table" style="margin-top: 12px;">
+                <thead><tr><th>Назва</th><th>Тип</th><th>Вимірів</th><th>Ресурсів</th><th>Рухів</th><th>Створено</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // --- Tabs ---
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        // --- API helpers ---
+        async function api(url, opts) {
+            const res = await fetch(url, opts);
+            return res.json();
+        }
+        async function apiPost(url, data) {
+            return api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        }
+
+        // --- Load reference data into selects ---
+        let products = [], warehouses = [];
+
+        async function loadRefs() {
+            [products, warehouses] = await Promise.all([api('/api/products'), api('/api/warehouses')]);
+            fillSelect('receipt-warehouse', warehouses, 'id', 'name');
+            fillSelect('receipt-product', products, 'id', 'name');
+            fillSelect('shipment-warehouse', warehouses, 'id', 'name');
+            fillSelect('shipment-product', products, 'id', 'name');
+        }
+
+        function fillSelect(id, items, valKey, labelKey) {
+            const sel = document.getElementById(id);
+            sel.innerHTML = items.map(i => `<option value="${i[valKey]}">${i[labelKey]}</option>`).join('');
+        }
+
+        function productName(id) { return (products.find(p => p.id == id) || {}).name || `#${id}`; }
+        function warehouseName(id) { return (warehouses.find(w => w.id == id) || {}).name || `#${id}`; }
+
+        // --- Balances ---
+        async function loadBalances() {
+            const data = await api('/api/balances');
+            const tbody = document.querySelector('#balances-table tbody');
+            if (!data.length) { tbody.innerHTML = '<tr><td colspan="4" style="color:#999">Немає даних</td></tr>'; return; }
+            tbody.innerHTML = data.map(r => `<tr>
+                <td>${r.warehouse_name}</td>
+                <td>${r.product_name}</td>
+                <td><span class="badge ${r.quantity >= 0 ? 'badge-pos' : 'badge-neg'}">${r.quantity}</span></td>
+                <td>${Number(r.cost).toFixed(2)}</td>
+            </tr>`).join('');
+        }
+
+        // --- Movements ---
+        async function loadMovements() {
+            const data = await api('/api/movements');
+            const tbody = document.querySelector('#movements-table tbody');
+            if (!data.length) { tbody.innerHTML = '<tr><td colspan="7" style="color:#999">Немає рухів</td></tr>'; return; }
+            tbody.innerHTML = data.map(r => `<tr>
+                <td>${r.id}</td>
+                <td style="font-size:11px">${r.recorder}</td>
+                <td>${r.period ? r.period.slice(0,10) : ''}</td>
+                <td>${warehouseName(r.warehouse_id)}</td>
+                <td>${productName(r.product_id)}</td>
+                <td><span class="badge ${Number(r.quantity) >= 0 ? 'badge-pos' : 'badge-neg'}">${r.quantity}</span></td>
+                <td>${Number(r.cost || 0).toFixed(2)}</td>
+            </tr>`).join('');
+        }
+
+        // --- Registers ---
+        async function loadRegisters() {
+            const data = await api('/api/registers');
+            const tbody = document.querySelector('#registers-table tbody');
+            tbody.innerHTML = data.map(r => `<tr>
+                <td><strong>${r.name}</strong></td>
+                <td>${r.kind}</td>
+                <td>${r.dimensions}</td>
+                <td>${r.resources}</td>
+                <td>${r.movements_count}</td>
+                <td>${r.created_at ? r.created_at.slice(0,10) : ''}</td>
+            </tr>`).join('');
+        }
+
+        // --- Operations ---
+        async function postReceipt() {
+            const data = {
+                warehouse_id: Number(document.getElementById('receipt-warehouse').value),
+                product_id: Number(document.getElementById('receipt-product').value),
+                quantity: Number(document.getElementById('receipt-qty').value),
+                cost: Number(document.getElementById('receipt-cost').value) || 0,
+            };
+            const res = await apiPost('/api/receipt', data);
+            const el = document.getElementById('receipt-status');
+            if (res.ok) {
+                el.className = 'status'; el.textContent = `✅ Оприбутковано: ${res.recorder}`;
+                document.getElementById('receipt-qty').value = '';
+                document.getElementById('receipt-cost').value = '';
+            } else {
+                el.className = 'status error'; el.textContent = `❌ ${res.error}`;
+            }
+        }
+
+        async function postShipment() {
+            const data = {
+                warehouse_id: Number(document.getElementById('shipment-warehouse').value),
+                product_id: Number(document.getElementById('shipment-product').value),
+                quantity: Number(document.getElementById('shipment-qty').value),
+                cost: Number(document.getElementById('shipment-cost').value) || 0,
+            };
+            const res = await apiPost('/api/shipment', data);
+            const el = document.getElementById('shipment-status');
+            if (res.ok) {
+                el.className = 'status'; el.textContent = `✅ Відвантажено: ${res.recorder}`;
+                document.getElementById('shipment-qty').value = '';
+                document.getElementById('shipment-cost').value = '';
+            } else {
+                el.className = 'status error'; el.textContent = `❌ ${res.error}`;
+            }
+        }
+
+        async function doUnpost() {
+            const recorder = document.getElementById('unpost-recorder').value.trim();
+            if (!recorder) return;
+            const res = await apiPost('/api/unpost', { recorder });
+            const el = document.getElementById('unpost-status');
+            if (res.ok) {
+                el.className = 'status'; el.textContent = `✅ Скасовано (видалено рухів: ${res.deleted})`;
+                document.getElementById('unpost-recorder').value = '';
+            } else {
+                el.className = 'status error'; el.textContent = `❌ ${res.error}`;
+            }
+        }
+
+        // --- Init ---
+        loadRefs().then(() => { loadBalances(); loadMovements(); loadRegisters(); });
+    </script>
+</body>
+</html>
