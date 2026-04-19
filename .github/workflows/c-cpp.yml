@@ -16,13 +16,25 @@ jobs:
       - name: Install PostgreSQL build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential postgresql-server-dev-all
+          # Find available postgresql-server-dev-N packages and install the highest version available
+          available_versions=$(apt-cache pkgnames 'postgresql-server-dev-*' | grep -E '^postgresql-server-dev-[0-9]+$' | sed -E 's/^postgresql-server-dev-([0-9]+)$/\1/')
+          if [ -n "$available_versions" ]; then
+            chosen=$(echo "$available_versions" | sort -nr | head -n1)
+            echo "Installing postgresql-server-dev-$chosen"
+            sudo apt-get install -y build-essential postgresql-server-dev-"$chosen"
+          else
+            # fallback when no specific dev package found: install libpq headers
+            echo "No postgresql-server-dev-N packages found; installing libpq-dev as a fallback"
+            sudo apt-get install -y build-essential libpq-dev
+          fi
 
       - name: Build extension with PGXS
         run: |
           export PG_CONFIG=$(which pg_config)
           echo "Using PG_CONFIG=$PG_CONFIG"
           pg_config --version
+          echo "Installed PostgreSQL packages:"
+          dpkg -l 'postgresql-*' postgresql-common || true
           make clean
           make USE_PGXS=1
 
