@@ -42,13 +42,9 @@ services:
       - ../test:/build/pg_accumulator/test:ro
     command: >
       bash -c "
-        echo '=== Installing pgTAP in test database ==='
+        echo '=== Installing extensions ==='
         psql -c 'CREATE EXTENSION IF NOT EXISTS pgtap;'
-        
-        echo '=== Running SQL setup ==='
-        for f in /build/pg_accumulator/test/setup/*.sql; do
-          [ -f \"$$f\" ] && psql -f \"$$f\"
-        done
+        psql -c 'CREATE EXTENSION IF NOT EXISTS pg_accumulator;'
 
         echo '=== Running pgTAP tests ==='
         pg_prove --verbose --recurse --ext .sql /build/pg_accumulator/test/sql/
