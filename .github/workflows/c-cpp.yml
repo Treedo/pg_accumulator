@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CC: gcc
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -16,7 +18,7 @@ jobs:
       - name: Install PostgreSQL build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential ca-certificates wget gnupg lsb-release
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates wget gnupg lsb-release clang
 
           # Find available postgresql-server-dev-N packages and install the highest version available
           available_versions=$(apt-cache pkgnames 'postgresql-server-dev-*' \
@@ -60,6 +62,14 @@ jobs:
             exit 1
           fi
           pg_config --version
+
+          # Ensure a clang-19 binary exists (some build targets call clang-19)
+          if ! command -v clang-19 >/dev/null 2>&1; then
+            if command -v clang >/dev/null 2>&1; then
+              echo "Creating /usr/bin/clang-19 symlink to installed clang"
+              sudo ln -sf "$(command -v clang)" /usr/bin/clang-19
+            fi
+          fi
 
       - name: Build extension with PGXS
         run: |
