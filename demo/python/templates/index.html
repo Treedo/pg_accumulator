@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pg_accumulator — Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #333; padding: 20px; }
+        h1 { margin-bottom: 8px; color: #1a73e8; }
+        h2 { margin: 24px 0 12px; color: #444; font-size: 1.2em; border-bottom: 2px solid #1a73e8; padding-bottom: 4px; }
+        .subtitle { color: #666; margin-bottom: 24px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+
+        /* Flash messages */
+        .flash { padding: 10px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 0.9em; }
+        .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .flash.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+
+        /* Cards */
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+        .card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e8e8e8; }
+        th { background: #f0f4f8; font-weight: 600; color: #555; white-space: nowrap; }
+        tr:hover { background: #f9fbfd; }
+        td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        .positive { color: #28a745; }
+        .negative { color: #dc3545; }
+
+        /* Forms */
+        form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .field label { font-size: 0.8em; color: #666; font-weight: 600; }
+        .field input, .field select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; }
+        .field input:focus, .field select:focus { outline: none; border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26,115,232,0.2); }
+        button { padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; font-weight: 600; }
+        .btn-primary { background: #1a73e8; color: #fff; }
+        .btn-primary:hover { background: #1557b0; }
+        .btn-danger { background: #dc3545; color: #fff; }
+        .btn-danger:hover { background: #c82333; }
+        .btn-secondary { background: #6c757d; color: #fff; }
+        .btn-secondary:hover { background: #5a6268; }
+
+        /* Balance query */
+        #balance-result { margin-top: 12px; padding: 12px; background: #f0f4f8; border-radius: 6px; display: none; }
+        #balance-result pre { white-space: pre-wrap; font-size: 0.85em; }
+
+        /* Empty state */
+        .empty { text-align: center; color: #999; padding: 20px; font-style: italic; }
+
+        /* Section */
+        .section { margin-bottom: 32px; }
+
+        /* Tags */
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600; }
+        .tag-balance { background: #d4edda; color: #155724; }
+        .tag-turnover { background: #fff3cd; color: #856404; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>pg_accumulator</h1>
+    <p class="subtitle">Демонстрація розширення — складський облік</p>
+
+    <!-- Flash messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    <!-- Post movement + Unpost -->
+    <div class="grid">
+        <div class="card">
+            <h2 style="margin-top:0">Записати рух</h2>
+            <form method="POST" action="/post">
+                <input type="hidden" name="register" value="inventory">
+                <div class="field">
+                    <label>Документ (recorder)</label>
+                    <input name="recorder" placeholder="receipt:101" required>
+                </div>
+                <div class="field">
+                    <label>Дата</label>
+                    <input name="period" type="date" value="{{ today }}">
+                </div>
+                <div class="field">
+                    <label>Склад</label>
+                    <input name="warehouse" type="number" min="1" value="1" required style="width:70px">
+                </div>
+                <div class="field">
+                    <label>Товар</label>
+                    <input name="product" type="number" min="1" value="1" required style="width:70px">
+                </div>
+                <div class="field">
+                    <label>Кількість</label>
+                    <input name="quantity" type="number" step="0.01" value="10" required style="width:100px">
+                </div>
+                <div class="field">
+                    <label>Сума</label>
+                    <input name="amount" type="number" step="0.01" value="500" required style="width:100px">
+                </div>
+                <button type="submit" class="btn-primary">Провести</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2 style="margin-top:0">Скасувати документ</h2>
+            <form method="POST" action="/unpost">
+                <input type="hidden" name="register" value="inventory">
+                <div class="field">
+                    <label>Документ (recorder)</label>
+                    <input name="recorder" placeholder="receipt:101" required>
+                </div>
+                <button type="submit" class="btn-danger">Скасувати</button>
+            </form>
+
+            <h2>Запит залишку</h2>
+            <form id="balance-form" onsubmit="return queryBalance()">
+                <div class="field">
+                    <label>Склад</label>
+                    <input id="b-warehouse" type="number" min="1" style="width:70px">
+                </div>
+                <div class="field">
+                    <label>Товар</label>
+                    <input id="b-product" type="number" min="1" style="width:70px">
+                </div>
+                <div class="field">
+                    <label>На дату</label>
+                    <input id="b-date" type="date">
+                </div>
+                <button type="submit" class="btn-secondary">Показати</button>
+            </form>
+            <div id="balance-result"><pre id="balance-json"></pre></div>
+        </div>
+    </div>
+
+    <!-- Current balances -->
+    <div class="section">
+        <h2>Поточні залишки (balance_cache)</h2>
+        <div class="card">
+            {% if balances %}
+            <table>
+                <thead>
+                    <tr><th>Склад</th><th>Товар</th><th>Кількість</th><th>Сума</th></tr>
+                </thead>
+                <tbody>
+                    {% for b in balances %}
+                    <tr>
+                        <td>{{ b.warehouse }}</td>
+                        <td>{{ b.product }}</td>
+                        <td class="num">{{ b.quantity }}</td>
+                        <td class="num">{{ b.amount }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty">Немає даних. Запишіть перший рух вище.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Movements -->
+    <div class="section">
+        <h2>Останні рухи</h2>
+        <div class="card">
+            {% if movements %}
+            <table>
+                <thead>
+                    <tr><th>Документ</th><th>Дата</th><th>Склад</th><th>Товар</th><th>Кількість</th><th>Сума</th><th>Записано</th></tr>
+                </thead>
+                <tbody>
+                    {% for m in movements %}
+                    <tr>
+                        <td>{{ m.recorder }}</td>
+                        <td>{{ m.period.strftime('%Y-%m-%d') if m.period else '' }}</td>
+                        <td>{{ m.warehouse }}</td>
+                        <td>{{ m.product }}</td>
+                        <td class="num {% if m.quantity > 0 %}positive{% elif m.quantity < 0 %}negative{% endif %}">
+                            {{ m.quantity }}
+                        </td>
+                        <td class="num {% if m.amount > 0 %}positive{% elif m.amount < 0 %}negative{% endif %}">
+                            {{ m.amount }}
+                        </td>
+                        <td>{{ m.recorded_at.strftime('%H:%M:%S') if m.recorded_at else '' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty">Немає рухів.</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function queryBalance() {
+    const wh = document.getElementById('b-warehouse').value;
+    const pr = document.getElementById('b-product').value;
+    const dt = document.getElementById('b-date').value;
+    const params = new URLSearchParams();
+    if (wh) params.set('warehouse', wh);
+    if (pr) params.set('product', pr);
+    if (dt) params.set('at_date', dt);
+
+    fetch('/balance?' + params.toString())
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById('balance-result');
+            const pre = document.getElementById('balance-json');
+            pre.textContent = JSON.stringify(data, null, 2);
+            el.style.display = 'block';
+        })
+        .catch(err => {
+            const el = document.getElementById('balance-result');
+            const pre = document.getElementById('balance-json');
+            pre.textContent = 'Помилка: ' + err;
+            el.style.display = 'block';
+        });
+    return false;
+}
+</script>
+</body>
+</html>

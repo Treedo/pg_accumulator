@@ -2,7 +2,7 @@
 -- End-to-end test: warehouse stock management scenario from README
 
 BEGIN;
-SELECT plan(10);
+SELECT plan(11);
 
 -- ============================================================
 -- Create warehouse register (matches README example)
@@ -93,9 +93,15 @@ SELECT is(
 
 -- Step 6: Verify totals consistency
 SELECT is(
-    (SELECT sum(quantity), sum(amount) FROM accum.inventory_movements WHERE warehouse=1 AND product=42),
-    (SELECT quantity, amount FROM accum.inventory_balance_cache WHERE warehouse=1 AND product=42),
-    'Step 6: Balance cache must equal SUM(movements) for wh1,prod42'
+    (SELECT sum(quantity) FROM accum.inventory_movements WHERE warehouse=1 AND product=42),
+    (SELECT quantity FROM accum.inventory_balance_cache WHERE warehouse=1 AND product=42),
+    'Step 6a: Balance cache quantity must equal SUM(movements) for wh1,prod42'
+);
+
+SELECT is(
+    (SELECT sum(amount) FROM accum.inventory_movements WHERE warehouse=1 AND product=42),
+    (SELECT amount FROM accum.inventory_balance_cache WHERE warehouse=1 AND product=42),
+    'Step 6b: Balance cache amount must equal SUM(movements) for wh1,prod42'
 );
 
 -- Step 7: Verify total product 42 across all warehouses

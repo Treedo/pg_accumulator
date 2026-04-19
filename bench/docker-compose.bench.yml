@@ -1,0 +1,55 @@
+services:
+  # Benchmark PostgreSQL — tuned for throughput (not durability)
+  postgres-bench:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pg_accumulator_bench_db
+    environment:
+      POSTGRES_DB: accumulator_bench
+      POSTGRES_USER: bench
+      POSTGRES_PASSWORD: bench_password
+    command: >
+      postgres
+        -c shared_preload_libraries='pg_accumulator'
+        -c pg_accumulator.background_workers=1
+        -c pg_accumulator.delta_merge_interval=5000
+        -c synchronous_commit=off
+        -c fsync=off
+        -c full_page_writes=off
+        -c checkpoint_completion_target=0.9
+        -c max_wal_size=2GB
+        -c work_mem=64MB
+        -c random_page_cost=1.1
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bench -d accumulator_bench"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # Benchmark runner
+  bench-runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pg_accumulator_bench_runner
+    depends_on:
+      postgres-bench:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres-bench
+      PGPORT: 5432
+      PGDATABASE: accumulator_bench
+      PGUSER: bench
+      PGPASSWORD: bench_password
+    volumes:
+      - ../bench:/bench:ro
+    command: >
+      bash -c "
+        set -e
+        echo '=== pg_accumulator Benchmark ==='
+        echo ''
+        psql -v ON_ERROR_STOP=1 -f /bench/sql/bench.sql
+        echo ''
+        echo '=== Benchmark complete ==='
+      "

@@ -1,13 +1,9 @@
 -- sql/00_schema.sql
 -- Core schema creation for pg_accumulator extension
+--
+-- NOTE: the schema itself is created automatically by PostgreSQL
+-- via the 'schema = accum' directive in pg_accumulator.control,
+-- so no CREATE SCHEMA statement is needed here.
 
--- Create the accumulator schema
--- Note: schema name is configurable via pg_accumulator.schema GUC
-
-DO $$
-BEGIN
-    -- The schema name comes from the extension's CREATE EXTENSION ... SCHEMA
-    -- For now, we use 'accum' as default
-    CREATE SCHEMA IF NOT EXISTS accum;
-END;
-$$;
+COMMENT ON SCHEMA @extschema@ IS
+    'pg_accumulator — accumulation registers for PostgreSQL (balance & turnover tracking)';

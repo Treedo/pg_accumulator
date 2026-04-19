@@ -15,7 +15,7 @@
 ```sql
 -- Генерується для кожного регістру:
 CREATE TABLE accum.<name>_movements (
-    id             uuid          DEFAULT gen_random_uuid() PRIMARY KEY,
+    id             uuid          DEFAULT gen_random_uuid(),
     recorded_at    timestamptz   DEFAULT now() NOT NULL,
     recorder       <recorder_type> NOT NULL,
     period         timestamptz   NOT NULL,
@@ -23,12 +23,13 @@ CREATE TABLE accum.<name>_movements (
     dim_hash       bigint        NOT NULL,
     -- динамічні колонки вимірів
     <dim1>         <type1>       NOT NULL,
-    <dim2>         <type2>,
+    <dim2>         <type2>       NOT NULL,
     ...
     -- динамічні колонки ресурсів
     <res1>         <type1>       NOT NULL DEFAULT 0,
     <res2>         <type2>       NOT NULL DEFAULT 0,
     ...
+    PRIMARY KEY (id, period)
 ) PARTITION BY RANGE (period);
 ```
 

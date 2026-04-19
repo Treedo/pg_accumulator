@@ -14,8 +14,8 @@ RUN pgxn install pgtap
 COPY . /build/pg_accumulator
 WORKDIR /build/pg_accumulator
 
-# Build extension (when source code is ready)
-# RUN make && make install
+# Build and install the C extension
+RUN make clean && make && make install
 
 # Custom entrypoint to create extension on startup
 COPY docker/init-scripts/ /docker-entrypoint-initdb.d/

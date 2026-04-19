@@ -2,39 +2,43 @@
 # PostgreSQL Extension Build System
 
 EXTENSION    = pg_accumulator
-EXTVERSION   = 0.1.0
+EXTVERSION   = 1.0.3
 MODULE_big   = pg_accumulator
 
+# Only list source files that actually exist.
+# Uncomment additional lines as modules are implemented.
 OBJS = src/core/pg_accumulator.o \
-       src/core/schema.o \
-       src/core/registry.o \
-       src/hash/hash.o \
-       src/ddl/ddl_generator.o \
-       src/ddl/ddl_tables.o \
-       src/ddl/ddl_indexes.o \
-       src/ddl/ddl_functions.o \
-       src/triggers/trigger_engine.o \
-       src/triggers/trigger_totals.o \
-       src/triggers/trigger_cache.o \
-       src/write_api/post.o \
-       src/write_api/unpost.o \
-       src/write_api/repost.o \
-       src/read_api/balance.o \
-       src/read_api/turnover.o \
-       src/read_api/movements.o \
-       src/registry_api/create.o \
-       src/registry_api/alter.o \
-       src/registry_api/drop.o \
-       src/registry_api/list.o \
-       src/registry_api/info.o \
-       src/delta_buffer/delta.o \
-       src/delta_buffer/merge.o \
-       src/partitioning/partition_manager.o \
-       src/partitioning/auto_create.o \
-       src/maintenance/verify.o \
-       src/maintenance/rebuild.o \
-       src/maintenance/stats.o \
        src/bgworker/worker.o
+#      src/core/schema.o \
+#      src/core/registry.o \
+#      src/hash/hash.o \
+#      src/ddl/ddl_generator.o \
+#      src/ddl/ddl_tables.o \
+#      src/ddl/ddl_indexes.o \
+#      src/ddl/ddl_functions.o \
+#      src/triggers/trigger_engine.o \
+#      src/triggers/trigger_totals.o \
+#      src/triggers/trigger_cache.o \
+#      src/write_api/post.o \
+#      src/write_api/unpost.o \
+#      src/write_api/repost.o \
+#      src/read_api/balance.o \
+#      src/read_api/turnover.o \
+#      src/read_api/movements.o \
+#      src/registry_api/create.o \
+#      src/registry_api/alter.o \
+#      src/registry_api/drop.o \
+#      src/registry_api/list.o \
+#      src/registry_api/info.o \
+#      src/delta_buffer/delta.o \
+#      src/delta_buffer/merge.o \
+#      src/partitioning/partition_manager.o \
+#      src/partitioning/auto_create.o \
+#      src/maintenance/verify.o \
+#      src/maintenance/rebuild.o \
+#      src/maintenance/stats.o
+
+PG_CPPFLAGS = -I$(srcdir)/src
 
 DATA = sql/pg_accumulator--$(EXTVERSION).sql
 EXTRA_CLEAN = sql/pg_accumulator--$(EXTVERSION).sql
@@ -67,7 +71,7 @@ PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
 # Custom targets
-.PHONY: test-docker test-tap test-all
+.PHONY: test-docker test-tap test-all bench bench-docker bench-no-rebuild
 
 test-docker:
 	docker compose -f docker/docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test-runner
@@ -76,3 +80,12 @@ test-tap:
 	docker compose -f docker/docker-compose.test.yml run --rm test-runner
 
 test-all: test-docker
+
+bench-docker:
+	./bench/run_bench.sh
+
+bench-no-rebuild:
+	./bench/run_bench.sh --no-build
+
+bench:
+	./bench/run_bench.sh --local

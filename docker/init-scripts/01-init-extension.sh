@@ -5,7 +5,7 @@ echo "=== pg_accumulator: Initializing extension ==="
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     -- Create the accum schema
-    CREATE SCHEMA IF NOT EXISTS accum;
+    CREATE EXTENSION pg_accumulator;
     
     -- Will be replaced with CREATE EXTENSION when built
     -- CREATE EXTENSION pg_accumulator;

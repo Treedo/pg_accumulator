@@ -2,7 +2,7 @@
 -- Tests for balance_cache — direct SQL access, edge cases
 
 BEGIN;
-SELECT plan(12);
+SELECT plan(11);
 
 -- Setup
 SELECT accum.register_create(

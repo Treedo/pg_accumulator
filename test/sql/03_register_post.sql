@@ -2,7 +2,7 @@
 -- Tests for register_post() — writing movements
 
 BEGIN;
-SELECT plan(28);
+SELECT plan(25);
 
 -- Setup: create test register
 SELECT accum.register_create(

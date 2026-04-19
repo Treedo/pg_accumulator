@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pg_accumulator — Фінансовий трекер</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #f4f6f9;
+      --surface:  #ffffff;
+      --accent:   #16a085;
+      --accent2:  #1abc9c;
+      --text:     #2c3e50;
+      --muted:    #7f8c8d;
+      --border:   #dde3ea;
+      --positive: #27ae60;
+      --negative: #e74c3c;
+      --shadow:   0 1px 4px rgba(0,0,0,.08);
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: var(--bg); color: var(--text); padding: 24px 16px; }
+
+    header { max-width: 1100px; margin: 0 auto 24px; }
+    header h1 { font-size: 1.5rem; color: var(--accent); }
+    header p  { color: var(--muted); font-size: .9rem; margin-top: 4px; }
+
+    .wrap { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+
+    /* ---- account cards ---- */
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+    .balance-card {
+      background: var(--surface); border-radius: 10px; padding: 18px 20px;
+      box-shadow: var(--shadow); border-left: 4px solid var(--accent2);
+    }
+    .balance-card .label { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .balance-card .value { font-size: 1.55rem; font-weight: 700; margin-top: 6px; }
+    .balance-card .value.neg { color: var(--negative); }
+    .balance-card .value.pos { color: var(--positive); }
+
+    /* ---- two-column row ---- */
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+
+    /* ---- card/panel ---- */
+    .panel { background: var(--surface); border-radius: 10px; padding: 20px; box-shadow: var(--shadow); }
+    .panel h2 { font-size: 1rem; color: var(--text); margin-bottom: 16px;
+                padding-bottom: 8px; border-bottom: 2px solid var(--accent2); }
+
+    /* ---- form ---- */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: .78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; }
+    .field input, .field select {
+      padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: .9rem; background: #fff; color: var(--text);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .field input:focus, .field select:focus {
+      outline: none; border-color: var(--accent2);
+      box-shadow: 0 0 0 3px rgba(26,188,156,.18);
+    }
+    .btn { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer;
+           font-size: .88rem; font-weight: 600; transition: opacity .15s; }
+    .btn:hover { opacity: .85; }
+    .btn-accent  { background: var(--accent); color: #fff; margin-top: 6px; }
+    .btn-danger  { background: var(--negative); color: #fff; padding: 4px 12px; font-size: .8rem; }
+    .btn-secondary { background: #ecf0f1; color: var(--text); }
+
+    /* ---- toast ---- */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px;
+      padding: 12px 20px; border-radius: 8px; font-size: .9rem; font-weight: 600;
+      color: #fff; display: none; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+      max-width: 320px;
+    }
+    #toast.ok  { background: var(--positive); }
+    #toast.err { background: var(--negative); }
+
+    /* ---- tables ---- */
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: #f0f5f4; font-size: .76rem; text-transform: uppercase;
+         letter-spacing: .04em; color: var(--muted); font-weight: 700; }
+    tr:hover td { background: #f9fdfc; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pos { color: var(--positive); font-weight: 600; }
+    .neg { color: var(--negative); font-weight: 600; }
+    .empty { color: var(--muted); font-style: italic; text-align: center; padding: 20px; }
+
+    /* ---- query result ---- */
+    #query-result {
+      margin-top: 14px; padding: 12px; background: #f0f5f4;
+      border-radius: 6px; display: none;
+    }
+    #query-result pre { white-space: pre-wrap; font-size: .82rem; color: var(--text); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>pg_accumulator</h1>
+  <p>Демонстрація розширення — фінансовий трекер</p>
+</header>
+
+<div class="wrap">
+
+  <!-- Account balance summary -->
+  <section>
+    <div class="cards" id="account-cards">
+      <div class="balance-card"><div class="label">Завантаження…</div></div>
+    </div>
+  </section>
+
+  <!-- Post + Query -->
+  <div class="row">
+
+    <!-- Post transaction -->
+    <div class="panel">
+      <h2>Нова транзакція</h2>
+      <form id="post-form">
+        <div class="form-grid">
+          <div class="field">
+            <label>Документ (recorder)</label>
+            <input name="recorder" id="recorder" placeholder="payment:101" required>
+          </div>
+          <div class="field">
+            <label>Дата</label>
+            <input name="period" id="period" type="date" required>
+          </div>
+          <div class="field">
+            <label>Рахунок</label>
+            <select name="account" id="account" required>
+              <option value="1">Готівка</option>
+              <option value="2">Банківський рахунок</option>
+              <option value="3">Кредитна картка</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Категорія</label>
+            <select name="category" id="category" required>
+              <option value="1">Зарплата</option>
+              <option value="2">Їжа</option>
+              <option value="3">Транспорт</option>
+              <option value="4">Комунальні</option>
+              <option value="5">Розваги</option>
+              <option value="6">Інше</option>
+            </select>
+          </div>
+          <div class="field" style="grid-column: span 2;">
+            <label>Сума (позитивна = дохід, від'ємна = витрата)</label>
+            <input name="amount" id="amount" type="number" step="0.01" placeholder="-1500.00" required>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-accent">Провести</button>
+      </form>
+    </div>
+
+    <!-- Query panel -->
+    <div class="panel">
+      <h2>Запит залишку на дату</h2>
+      <form id="balance-form">
+        <div class="form-grid">
+          <div class="field">
+            <label>Рахунок</label>
+            <select id="q-account">
+              <option value="">— всі —</option>
+              <option value="1">Готівка</option>
+              <option value="2">Банківський рахунок</option>
+              <option value="3">Кредитна картка</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Категорія</label>
+            <select id="q-category">
+              <option value="">— всі —</option>
+              <option value="1">Зарплата</option>
+              <option value="2">Їжа</option>
+              <option value="3">Транспорт</option>
+              <option value="4">Комунальні</option>
+              <option value="5">Розваги</option>
+              <option value="6">Інше</option>
+            </select>
+          </div>
+          <div class="field" style="grid-column: span 2;">
+            <label>На дату (порожньо = зараз)</label>
+            <input id="q-date" type="date">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-secondary" style="margin-top:6px;">Показати залишок</button>
+      </form>
+      <div id="query-result"><pre id="query-json"></pre></div>
+
+      <h2 style="margin-top: 20px;">Скасувати документ</h2>
+      <form id="unpost-form" style="display:flex; gap:10px; align-items:flex-end;">
+        <div class="field" style="flex:1;">
+          <label>Документ (recorder)</label>
+          <input name="recorder" id="unpost-recorder" placeholder="payment:101" required>
+        </div>
+        <button type="submit" class="btn btn-danger" style="padding:7px 16px; font-size:.88rem;">Скасувати</button>
+      </form>
+    </div>
+
+  </div>
+
+  <!-- Movements table -->
+  <div class="panel">
+    <h2>Останні транзакції</h2>
+    <div style="overflow-x:auto;">
+      <table id="movements-table">
+        <thead>
+          <tr>
+            <th>Документ</th>
+            <th>Дата</th>
+            <th>Рахунок</th>
+            <th>Категорія</th>
+            <th class="num">Сума</th>
+            <th>Записано</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="movements-body">
+          <tr><td colspan="7" class="empty">Завантаження…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ---- Helpers ----
+  const $ = (id) => document.getElementById(id);
+
+  function toast(msg, isErr = false) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.className = isErr ? 'err' : 'ok';
+    el.style.display = 'block';
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.style.display = 'none'; }, 3500);
+  }
+
+  async function api(method, path, body) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(path, opts);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? res.statusText);
+    return data;
+  }
+
+  function fmt(n) {
+    const v = parseFloat(n);
+    return v.toLocaleString('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  // ---- Set default date to today ----
+  const today = new Date().toISOString().slice(0, 10);
+  $('period').value = today;
+
+  // ---- Load account balances ----
+  async function loadBalances() {
+    try {
+      const data = await api('GET', '/api/balances');
+      const container = $('account-cards');
+      if (!data.length) {
+        container.innerHTML = '<div class="balance-card"><div class="label">Немає даних</div></div>';
+        return;
+      }
+      container.innerHTML = data.map(r => {
+        const v = parseFloat(r.total);
+        const cls = v < 0 ? 'neg' : 'pos';
+        return `<div class="balance-card">
+          <div class="label">${r.account_name}</div>
+          <div class="value ${cls}">${fmt(r.total)} ₴</div>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      $('account-cards').innerHTML = `<div class="balance-card"><div class="label" style="color:var(--negative)">${e.message}</div></div>`;
+    }
+  }
+
+  // ---- Load movements ----
+  async function loadMovements() {
+    try {
+      const data = await api('GET', '/api/movements');
+      const tbody = $('movements-body');
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">Немає транзакцій</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.map(r => {
+        const v = parseFloat(r.amount);
+        const cls = v < 0 ? 'neg' : 'pos';
+        const time = r.recorded_at ? new Date(r.recorded_at).toLocaleTimeString('uk-UA') : '';
+        return `<tr>
+          <td>${r.recorder}</td>
+          <td>${r.period ?? ''}</td>
+          <td>${r.account_name}</td>
+          <td>${r.category_name}</td>
+          <td class="num ${cls}">${fmt(r.amount)} ₴</td>
+          <td style="color:var(--muted);font-size:.8rem;">${time}</td>
+          <td><button class="btn btn-danger" onclick="unpostRecorder('${r.recorder}')">✕</button></td>
+        </tr>`;
+      }).join('');
+    } catch (e) {
+      $('movements-body').innerHTML = `<tr><td colspan="7" class="empty" style="color:var(--negative)">${e.message}</td></tr>`;
+    }
+  }
+
+  function refresh() {
+    loadBalances();
+    loadMovements();
+  }
+
+  // ---- Post form ----
+  $('post-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('POST', '/api/post', {
+        recorder: $('recorder').value.trim(),
+        period:   $('period').value,
+        account:  Number($('account').value),
+        category: Number($('category').value),
+        amount:   Number($('amount').value),
+      });
+      toast('Транзакцію проведено ✓');
+      e.target.reset();
+      $('period').value = today;
+      refresh();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // ---- Unpost form ----
+  $('unpost-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('POST', '/api/unpost', { recorder: $('unpost-recorder').value.trim() });
+      toast('Документ скасовано ✓');
+      $('unpost-recorder').value = '';
+      refresh();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  async function unpostRecorder(recorder) {
+    try {
+      await api('POST', '/api/unpost', { recorder });
+      toast(`Скасовано: ${recorder} ✓`);
+      refresh();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  // ---- Balance query form ----
+  $('balance-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const params = new URLSearchParams();
+    const acc  = $('q-account').value;
+    const cat  = $('q-category').value;
+    const date = $('q-date').value;
+    if (acc)  params.set('account',  acc);
+    if (cat)  params.set('category', cat);
+    if (date) params.set('at_date',  date);
+    try {
+      const data = await api('GET', `/api/balance?${params}`);
+      const result = $('query-result');
+      $('query-json').textContent = JSON.stringify(data, null, 2);
+      result.style.display = 'block';
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // ---- Initial load ----
+  refresh();
+</script>
+</body>
+</html>
