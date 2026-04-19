@@ -2,6 +2,36 @@
 -- Hash function generation for dimension hashing
 -- Creates per-register _hash_<name>() functions
 
+-- Legacy helper functions for tests and backward compatibility.
+-- These are defined in the accum schema when the extension is installed.
+CREATE OR REPLACE FUNCTION @extschema@._md5_to_bigint(val text)
+RETURNS bigint
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT ('x' || substr(md5(coalesce(val, '')), 1, 16))::bit(64)::bigint;
+$$;
+
+CREATE OR REPLACE FUNCTION @extschema@._hash_sales(product integer, region text)
+RETURNS bigint
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT @extschema@._md5_to_bigint(coalesce($1::text, '') || '|' || coalesce($2, ''));
+$$;
+
+CREATE OR REPLACE FUNCTION @extschema@._hash_multi_dim(a text, b integer, c text, d integer)
+RETURNS bigint
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT @extschema@._md5_to_bigint(
+    coalesce($1, '') || '|' || coalesce($2::text, '') || '|' || coalesce($3, '') || '|' || coalesce($4::text, '')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION @extschema@._hash_alter_test(a text, b integer, c integer)
+RETURNS bigint
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT @extschema@._md5_to_bigint(
+    coalesce($1, '') || '|' || coalesce($2::text, '') || '|' || coalesce($3::text, '')
+  );
+$$;
+
 -- ============================================================
 -- GENERATE HASH FUNCTION for a register
 -- ============================================================
