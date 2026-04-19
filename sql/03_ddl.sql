@@ -269,22 +269,50 @@ BEGIN
     EXECUTE format('DROP TABLE IF EXISTS @extschema@.%I CASCADE',
         p_name || '_balance_cache_delta');
 
-    -- Drop trigger functions (not removed by DROP TABLE CASCADE)
-    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
-        '_trg_' || p_name || '_before_insert');
-    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
-        '_trg_' || p_name || '_after_insert');
-    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
-        '_trg_' || p_name || '_after_delete');
-    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
-        '_trg_' || p_name || '_block_update');
-    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
-        '_trg_' || p_name || '_protect_derived');
+        -- Drop trigger functions (not removed by DROP TABLE CASCADE)
+    BEGIN
+        EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+            '_trg_' || p_name || '_before_insert');
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Skipping drop of trigger function %: %', '_trg_' || p_name || '_before_insert', SQLERRM;
+    END;
+    BEGIN
+        EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+            '_trg_' || p_name || '_after_insert');
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Skipping drop of trigger function %: %', '_trg_' || p_name || '_after_insert', SQLERRM;
+    END;
+    BEGIN
+        EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+            '_trg_' || p_name || '_after_delete');
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Skipping drop of trigger function %: %', '_trg_' || p_name || '_after_delete', SQLERRM;
+    END;
+    BEGIN
+        EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+            '_trg_' || p_name || '_block_update');
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Skipping drop of trigger function %: %', '_trg_' || p_name || '_block_update', SQLERRM;
+    END;
+    BEGIN
+        EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+            '_trg_' || p_name || '_protect_derived');
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Skipping drop of trigger function %: %', '_trg_' || p_name || '_protect_derived', SQLERRM;
+    END;
 
     -- Drop read functions (balance/turnover/movements)
-    PERFORM @extschema@._drop_read_functions(p_name);
+    BEGIN
+        PERFORM @extschema@._drop_read_functions(p_name);
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Skipping drop of read functions for %: %', p_name, SQLERRM;
+    END;
 
     -- Drop hash function
-    PERFORM @extschema@._drop_hash_function(p_name);
+    BEGIN
+        PERFORM @extschema@._drop_hash_function(p_name);
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Skipping drop of hash functions for %: %', p_name, SQLERRM;
+    END;
 END;
 $$;

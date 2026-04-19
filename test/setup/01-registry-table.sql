@@ -242,7 +242,11 @@ BEGIN
         WHERE n.nspname = 'accum'
           AND p.proname = '_hash_' || p_name
     LOOP
-        EXECUTE format('DROP FUNCTION %s CASCADE', r.fn);
+        BEGIN
+            EXECUTE format('DROP FUNCTION %s CASCADE', r.fn);
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'Skipping drop of hash function %: %', r.fn, SQLERRM;
+        END;
     END LOOP;
 END;
 $$;
