@@ -507,23 +507,40 @@ SELECT accum._force_delta_merge(
 
 ## Benchmarks
 
-Results from the benchmark suite ([bench/sql/bench.sql](bench/sql/bench.sql)) on PostgreSQL 17, Docker, macOS ARM, single connection:
+Measured results from the benchmark suite ([bench/sql/bench.sql](bench/sql/bench.sql)) on PostgreSQL 17, Docker, macOS ARM, single connection.
 
-| Scenario | ops/sec | Avg latency |
-|---|---|---|
-| `register_post()` single insert | ~1,160 | 0.86 ms |
-| `register_post()` batch of 10 | ~2,500 | 0.40 ms |
-| `register_post()` batch of 100 | ~3,590 | 0.28 ms |
-| `register_post()` batch of 1000 | ~4,925 | 0.20 ms |
-| `balance_cache` direct SELECT | ~9,150 | 0.11 ms |
-| `<register>_balance()` function | ~2,540 | 0.39 ms |
-| `register_post()` high-write mode | ~1,618 | 0.62 ms |
-| `register_unpost()` | ~813 | 1.23 ms |
+### 1x scale
+
+| Scenario | Iterations | Total | Avg/op | ops/sec |
+|---|---|---|---|---|
+| `register_post()` single insert | 5,000 | 5,226.50 ms | 1.0453 ms | 956.7 |
+| `register_post()` batch of 10 | 5,000 | 2,498.61 ms | 0.4997 ms | 2,001.1 |
+| `register_post()` batch of 100 | 10,000 | 4,460.77 ms | 0.4461 ms | 2,241.8 |
+| `register_post()` batch of 1000 | 10,000 | 2,845.90 ms | 0.2846 ms | 3,513.8 |
+| `balance_cache` direct SELECT | 2,000 | 236.65 ms | 0.1183 ms | 8,451.2 |
+| `b_std_balance()` function | 1,000 | 408.49 ms | 0.4085 ms | 2,448.1 |
+| `register_post()` high-write mode | 5,000 | 4,427.16 ms | 0.8854 ms | 1,129.4 |
+| `register_unpost()` | 1,000 | 715.70 ms | 0.7157 ms | 1,397.2 |
+
+### 10x scale
+
+| Scenario | Iterations | Total | Avg/op | ops/sec |
+|---|---|---|---|---|
+| `register_post()` single insert | 50,000 | 116,504.98 ms | 2.3301 ms | 429.2 |
+| `register_post()` batch of 10 | 50,000 | 61,083.96 ms | 1.2217 ms | 818.5 |
+| `register_post()` batch of 100 | 100,000 | 101,164.23 ms | 1.0116 ms | 988.5 |
+| `register_post()` batch of 1000 | 100,000 | 47,264.90 ms | 0.4726 ms | 2,115.7 |
+| `balance_cache` direct SELECT | 20,000 | 561.07 ms | 0.0281 ms | 35,646.3 |
+| `b_std_10_balance()` function | 10,000 | 4,997.46 ms | 0.4997 ms | 2,001.0 |
+| `register_post()` high-write mode | 50,000 | 106,581.80 ms | 2.1316 ms | 469.1 |
+| `register_unpost()` | 10,000 | 15,811.21 ms | 1.5811 ms | 632.5 |
+
+These values were captured from the 1x and 10x benchmark runs on this environment; actual performance may vary by hardware and PostgreSQL configuration.
 
 Key takeaways:
-- **Batch mode** delivers 3–4x higher throughput than individual inserts
-- **Balance cache** point lookups are ~0.1 ms — suitable for hot paths
-- **High-write mode** eliminates contention under concurrent load
+- **Batch mode** delivers much higher throughput than single-item inserts
+- **Balance cache** point lookups remain extremely fast even at 10x scale
+- **High-write mode** is useful for larger write workloads, though average per-op latency is higher than the standard register
 
 Run the benchmark suite:
 
