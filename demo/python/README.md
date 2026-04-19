@@ -1,46 +1,46 @@
-# pg_accumulator Demo
+# pg_accumulator — Python Demo
 
-Простий веб-додаток для демонстрації можливостей розширення `pg_accumulator`.
+A simple web application demonstrating the core capabilities of the `pg_accumulator` extension.
 
-## Що демонструє
+## What It Demonstrates
 
-- **Створення регістру** — `register_create()` (виконується автоматично при старті)
-- **Запис рухів** — `register_post()` через форму
-- **Скасування документа** — `register_unpost()`
-- **Поточні залишки** — читання з `balance_cache` (O(1))
-- **Запит залишку** — `inventory_balance()` з фільтрами та на дату
-- **Історія рухів** — перегляд останніх операцій
+- **Register creation** — `register_create()` (runs automatically on startup)
+- **Posting movements** — `register_post()` via a web form
+- **Canceling documents** — `register_unpost()`
+- **Current balances** — reading from `balance_cache` (O(1))
+- **Balance queries** — `inventory_balance()` with filters and historical dates
+- **Movement history** — browsing recent operations
 
-## Запуск
+## Getting Started
 
 ```bash
-cd demo
+cd demo/python
 docker compose up --build
 ```
 
-Відкрити у браузері: **http://localhost:5001**
+Open in browser: **http://localhost:5001**
 
-## Структура
+## Project Structure
 
 ```
-demo/
-  app.py               — Flask-бекенд
-  templates/index.html  — Веб-інтерфейс
-  init.sql              — Створення регістру + початкові дані
-  docker-compose.yml    — PostgreSQL з pg_accumulator + Flask-додаток
-  Dockerfile            — Контейнер для Flask
+demo/python/
+  app.py               — Flask backend
+  templates/index.html  — Web interface
+  init.sql              — Register creation + seed data
+  docker-compose.yml    — PostgreSQL with pg_accumulator + Flask app
+  Dockerfile            — Flask container
 ```
 
-## Сценарій демонстрації
+## Demo Walkthrough
 
-1. Відкрити http://localhost:5000
-2. Побачити початкові залишки (6 рухів уже записано)
-3. Записати новий прихід: `receipt:5`, склад 1, товар 1, кількість 50, сума 25000
-4. Побачити як залишок оновився миттєво
-5. Скасувати документ `receipt:5` — залишок повернувся до попереднього стану
-6. Запитати залишок на дату `2026-04-05` — побачити стан складу у минулому
+1. Open http://localhost:5001
+2. See initial balances (6 movements are pre-loaded)
+3. Post a new receipt: `receipt:5`, warehouse 1, product 1, quantity 50, amount 25000
+4. Observe that the balance updates instantly
+5. Cancel document `receipt:5` — the balance reverts to its previous state
+6. Query balance at date `2026-04-05` — see the warehouse state at that historical point
 
-## Зупинка
+## Shutdown
 
 ```bash
 docker compose down -v

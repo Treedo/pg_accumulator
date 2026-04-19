@@ -1,96 +1,62 @@
-# Модуль: Background Worker (Фоновий процес)
+# Module: Background Worker
 
-## Призначення
-Фоновий процес PostgreSQL, який виконує періодичні обслуговуючі завдання: злиття delta buffer, автоматичне створення партицій, збір статистики.
+**Purpose:** A PostgreSQL background worker process that performs periodic maintenance tasks: delta buffer compaction, automatic partition creation, and statistics collection.
 
-## Файли
-- `worker.c` — Реалізація background worker
+## Files
 
-## Відповідальність
+- `worker.c` — Background worker implementation
 
-### 1. Реєстрація worker (`_PG_init`)
-```c
-BackgroundWorker worker;
-snprintf(worker.bgw_name, BGW_MAXLEN, "pg_accumulator maintenance");
-worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
-worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
-worker.bgw_restart_time = 10; // restart через 10 сек при crash
-worker.bgw_main_arg = 0;
-RegisterBackgroundWorker(&worker);
-```
+## Responsibilities
 
-### 2. Цикл обслуговування
+### 1. Worker Registration
+
+Registered via `_PG_init` with `BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION` flags. The number of workers is configurable via `pg_accumulator.background_workers` (default: 1, range: 0–8). Requires `shared_preload_libraries = 'pg_accumulator'`.
+
+### 2. Maintenance Loop
+
+The worker runs a continuous loop:
 
 ```
-LOOP:
-  1. Перевірити та виконати delta merge для всіх high_write регістрів
-     → Кожні pg_accumulator.delta_merge_interval
-     → Для кожного регістру з high_write=true:
-        DELETE дельт старших за delta_merge_delay
-        Агрегувати та UPDATE cache
-
-  2. Перевірити та створити партиції наперед
-     → Кожні pg_accumulator.maintenance_interval
-     → Для кожного регістру:
-        Перевірити чи є партиції на partitions_ahead вперед
-        Створити відсутні
-
-  3. Спати до наступного інтервалу
-     → WaitLatch з мінімальним інтервалом
-     → Реагити на SIGTERM для graceful shutdown
+while (!shutdown_requested) {
+    1. Delta merge — compact all pending deltas for high_write registers
+    2. Partition maintenance — create missing future partitions
+    3. Sleep for maintenance_interval
+}
 ```
 
 ### 3. Delta Merge
-```
-Для кожного регістру з high_write=true:
-  1. Advisory lock (pg_try_advisory_lock) → пропустити якщо зайнятий
-  2. BEGIN
-  3. DELETE FROM delta WHERE created_at < now() - delay
-     RETURNING dim_hash, resources
-  4. Агрегувати по dim_hash
-  5. UPDATE cache SET resources += aggregated
-  6. COMMIT
-  7. Advisory unlock
-```
+
+For each register with `high_write = true`:
+- Acquires an advisory lock to prevent concurrent merge operations
+- Executes `_delta_merge_register()` with configured age threshold and batch size
+- Releases the lock
 
 ### 4. Partition Maintenance
-```
-Для кожного регістру:
-  1. Знайти останню існуючу партицію
-  2. Якщо < partitions_ahead від now():
-     CREATE PARTITION для відсутніх періодів
-  3. Advisory lock для уникнення конкурентного створення
-```
+
+For each register:
+- Checks if `partitions_ahead` future partitions exist
+- Creates any missing partitions
 
 ### 5. Graceful Shutdown
-```
-HandleSIGTERM:
-  - Встановити прапор shutdown
-  - Завершити поточну транзакцію (COMMIT або ROLLBACK)
-  - Вийти з циклу
-```
 
-### 6. Конфігурація
-| GUC | Опис | Default |
-|-----|------|---------|
-| `background_workers` | Кількість worker-процесів | 2 |
-| `maintenance_interval` | Інтервал обслуговування | 1 hour |
-| `delta_merge_interval` | Інтервал merge дельт | 5s |
-| `delta_merge_delay` | Мін. вік дельти | 2s |
-| `delta_merge_batch_size` | Макс. дельт за merge | 10000 |
+Responds to `SIGTERM` by setting a shutdown flag and exiting cleanly after the current operation completes.
 
-## Залежності
-- `core/registry` — список регістрів
-- `delta_buffer/merge` — логіка злиття
-- `partitioning/auto_create` — створення партицій
+## Configuration
 
-## SQL-файли
-- Немає (реалізований повністю на C)
+| GUC Parameter | Default | Restart | Description |
+|---|---|---|---|
+| `pg_accumulator.background_workers` | 1 | Yes | Number of maintenance workers |
+| `pg_accumulator.maintenance_interval` | 3600000 ms | No | Full maintenance cycle interval |
+| `pg_accumulator.delta_merge_interval` | 5000 ms | No | Delta merge cycle interval |
+| `pg_accumulator.delta_merge_delay` | 2000 ms | No | Minimum delta age before merge |
+| `pg_accumulator.delta_merge_batch_size` | 10000 | No | Max deltas per merge cycle |
 
-## Тести
-- Worker запускається при завантаженні розширення
-- Delta merge виконується за розкладом
-- Партиції створюються автоматично
-- Graceful shutdown працює
-- Множинні workers не конфліктують (advisory locks)
-- Worker переживає помилки (restart)
+## Dependencies
+
+- `core/registry` — reads the list of registers and their configurations
+- `delta_buffer/merge` — calls `_delta_merge_register()` for compaction
+- `partitioning/auto_create` — calls partition creation functions
+
+## Related Tests
+
+- [test/sql/21_bgworker.sql](../../test/sql/21_bgworker.sql) — Worker registration and lifecycle

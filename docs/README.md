@@ -336,6 +336,7 @@ SELECT accum.register_create(
 
 ```
 accum.inventory_movements          -- Partitioned movements table
+accum.inventory_totals_day         -- Daily turnover totals
 accum.inventory_totals_month       -- Monthly turnover totals
 accum.inventory_totals_year        -- Annual turnover totals
 accum.inventory_balance_cache      -- Cached current balance (balance kind only)
@@ -744,10 +745,10 @@ LIMIT 10;
 │  │  movements  (PARTITION BY RANGE period)                   │  │
 │  │  Append-only, source of truth                             │  │
 │  └──────────────────────────────────────────────────────────┘  │
-│  ┌─────────────────────────┐  ┌────────────────────────────┐   │
-│  │  totals_year            │  │  totals_month              │   │
-│  │  Annual turnover sums   │  │  Monthly turnover sums     │   │
-│  └─────────────────────────┘  └────────────────────────────┘   │
+│  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐│
+│  │  totals_day       │ │  totals_month    │ │  totals_year     ││
+│  │  Daily turnovers  │ │  Monthly totals  │ │  Annual totals   ││
+│  └──────────────────┘ └──────────────────┘ └──────────────────┘│
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  balance_cache                                            │  │
 │  │  Cumulative current balance, O(1) point lookup           │  │
@@ -820,7 +821,12 @@ Future partitions are created automatically by the background worker
 
 ### Totals Layer
 
-Totals store **turnovers** (not cumulative balances) per period. This is the key architectural decision that makes retroactive corrections O(1).
+Totals store **turnovers** (not cumulative balances) per period at three granularities: day, month, and year. This is the key architectural decision that makes retroactive corrections O(1).
+
+The totals hierarchy depends on the `totals_period` setting (default: `'day'`):
+- `totals_period = 'day'` → `totals_day` + `totals_month` + `totals_year`
+- `totals_period = 'month'` → `totals_month` + `totals_year`
+- `totals_period = 'year'` → `totals_year`
 
 ```sql
 -- Monthly totals table (auto-created):
@@ -1520,6 +1526,26 @@ A: Yes, via `register_alter()`. The new dimension column is added with a nullabl
 
 **Q: Does the extension work without the background worker?**  
 A: Yes, for most features. The background worker handles delta buffer merges (required for high-write mode consistency) and proactive partition creation. Without it, set `pg_accumulator.background_workers = 0` and manage these manually using `_force_delta_merge()` and `register_create_partitions()`.
+
+---
+
+## Module Documentation
+
+Detailed documentation for each extension module:
+
+| Module | Documentation |
+|---|---|
+| Core | [src/core/MODULE.md](../src/core/MODULE.md) |
+| DDL Generator | [src/ddl/MODULE.md](../src/ddl/MODULE.md) |
+| Hash | [src/hash/MODULE.md](../src/hash/MODULE.md) |
+| Triggers | [src/triggers/MODULE.md](../src/triggers/MODULE.md) |
+| Write API | [src/write_api/MODULE.md](../src/write_api/MODULE.md) |
+| Read API | [src/read_api/MODULE.md](../src/read_api/MODULE.md) |
+| Registry API | [src/registry_api/MODULE.md](../src/registry_api/MODULE.md) |
+| Delta Buffer | [src/delta_buffer/MODULE.md](../src/delta_buffer/MODULE.md) |
+| Partitioning | [src/partitioning/MODULE.md](../src/partitioning/MODULE.md) |
+| Maintenance | [src/maintenance/MODULE.md](../src/maintenance/MODULE.md) |
+| Background Worker | [src/bgworker/MODULE.md](../src/bgworker/MODULE.md) |
 
 ---
 

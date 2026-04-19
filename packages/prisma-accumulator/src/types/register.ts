@@ -1,4 +1,5 @@
 import type { MapPgFields, DimensionFilter, ResourceResult } from './pg-types';
+export type { ResourceResult } from './pg-types';
 
 /** Register kind */
 export type RegisterKind = 'balance' | 'turnover';

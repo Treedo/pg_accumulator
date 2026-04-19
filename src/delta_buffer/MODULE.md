@@ -1,109 +1,82 @@
-# Модуль: Delta Buffer (High-Write Mode)
+# Module: Delta Buffer (High-Write Mode)
 
-## Призначення
-Забезпечення масштабованості при високому contention на один dim_hash. Замість UPDATE balance_cache (який блокує рядок), виконується INSERT у append-only delta buffer, який періодично зливається з основним кешем фоновим процесом.
+**Purpose:** Scalable writes under high contention on a single `dim_hash`. Instead of `UPDATE`-ing the balance_cache row (which requires a row-level lock), movements append resource deltas to an UNLOGGED buffer table that is periodically compacted into the cache.
 
-## Файли
-- `delta.c` — Логіка запису в delta buffer та читання з урахуванням буфера
-- `merge.c` — Логіка злиття (merge) дельт у balance_cache
+## Files
 
-## Відповідальність
+- `delta.c` — Delta write logic (INSERT into buffer instead of UPDATE cache)
+- `merge.c` — Delta merge (compaction) logic
 
-### 1. Delta запис (`delta.c`)
+## Responsibilities
 
-При `high_write = true` тригер на movements замість:
+### 1. Delta Write
+
+When `high_write = true`, the AFTER INSERT trigger inserts a delta row instead of updating `balance_cache`:
+
 ```sql
--- Стандартний режим (lock на рядок)
-UPDATE balance_cache SET qty += delta WHERE dim_hash = X
-```
-Робить:
-```sql
--- High-write режим (без lock)
-INSERT INTO balance_cache_delta (dim_hash, qty, amount, created_at)
-VALUES (X, delta_qty, delta_amount, now())
+INSERT INTO <register>_balance_cache_delta (dim_hash, <resources>)
+VALUES (NEW.dim_hash, NEW.<resource1>, NEW.<resource2>, ...);
 ```
 
-**Характеристики:**
-- Таблиця `UNLOGGED` — не пишеться в WAL (швидше)
-- `bigserial` PK — мінімальний overhead
-- Жодних UPDATE/блокувань — тільки INSERT
-- **ВАЖЛИВО:** дані delta buffer втрачаються при crash (UNLOGGED)
-  → При відновленні потрібен `register_rebuild_cache()`
+No lock is acquired on the `balance_cache` row, eliminating all contention.
 
-### 2. Читання з урахуванням дельт (`delta.c`)
+### 2. Delta-Aware Reads
 
-Функція `_balance_with_delta()`:
-```sql
-SELECT
-    c.<res> + COALESCE(d.<res>, 0) AS <res>
-FROM balance_cache c
-LEFT JOIN (
-    SELECT dim_hash, SUM(<res>) AS <res>
-    FROM balance_cache_delta
-    WHERE dim_hash = $1
-    GROUP BY dim_hash
-) d USING (dim_hash)
-WHERE c.dim_hash = $1;
+The `_balance_internal` function in high-write mode computes:
+
+```
+result = balance_cache + COALESCE(SUM(pending deltas), 0)
 ```
 
-### 3. Delta Merge (`merge.c`)
+This ensures reads are always accurate, regardless of whether compaction has run.
 
-Фоновий процес, який зливає накопичені дельти в balance_cache:
+### 3. Delta Merge (Compaction)
+
+The `_delta_merge_register()` function atomically consumes and applies accumulated deltas:
 
 ```sql
 WITH consumed AS (
-    DELETE FROM balance_cache_delta
-    WHERE created_at < now() - interval '<delta_merge_delay>'
+    DELETE FROM <register>_balance_cache_delta
+    WHERE created_at < now() - p_max_age
+    ORDER BY id LIMIT p_batch_size
     RETURNING dim_hash, <resources>
 ),
 agg AS (
-    SELECT dim_hash, SUM(<res1>) AS <res1>, SUM(<res2>) AS <res2>
-    FROM consumed
-    GROUP BY dim_hash
+    SELECT dim_hash, SUM(<resource1>) AS <resource1>, ...
+    FROM consumed GROUP BY dim_hash
 )
-UPDATE balance_cache c
-SET <res1> = c.<res1> + a.<res1>,
-    <res2> = c.<res2> + a.<res2>,
+UPDATE <register>_balance_cache c
+SET <resource1> = c.<resource1> + a.<resource1>, ...,
     version = c.version + 1
-FROM agg a
-WHERE c.dim_hash = a.dim_hash;
+FROM agg a WHERE c.dim_hash = a.dim_hash;
 ```
 
-**Параметри:**
-| GUC | Опис | Default |
-|-----|------|---------|
-| `delta_merge_interval` | Як часто запускати merge | 5s |
-| `delta_merge_delay` | Мінімальний вік дельти | 2s |
-| `delta_merge_batch_size` | Макс. дельт за раз | 10000 |
+### 4. Delta Buffer Table
 
-### 4. Таблиця delta buffer
 ```sql
-CREATE UNLOGGED TABLE accum.<name>_balance_cache_delta (
-    id         bigserial     PRIMARY KEY,
-    dim_hash   bigint        NOT NULL,
-    <res1>     <type1>       NOT NULL DEFAULT 0,
-    <res2>     <type2>       NOT NULL DEFAULT 0,
-    created_at timestamptz   DEFAULT now()
+CREATE UNLOGGED TABLE <register>_balance_cache_delta (
+    id         bigserial    PRIMARY KEY,
+    dim_hash   bigint       NOT NULL,
+    <resources>,
+    created_at timestamptz  DEFAULT now()
 );
-
-CREATE INDEX ON accum.<name>_balance_cache_delta (dim_hash);
-CREATE INDEX ON accum.<name>_balance_cache_delta (created_at);
+CREATE INDEX ON <register>_balance_cache_delta (dim_hash, created_at);
 ```
 
-## Залежності
-- `core/registry` — перевірка high_write режиму
-- `triggers` — інтеграція з тригерним ланцюгом
-- `bgworker` — запуск merge процесу
+`UNLOGGED` for maximum write throughput. Trade-off: deltas are lost on PostgreSQL crash — run `register_rebuild_cache()` after recovery.
 
-## SQL-файли
-- `sql/08_delta_buffer.sql` — DDL та функції delta buffer
+## Configuration
 
-## Тести
-- high_write POST → дельти записані
-- Читання з pending дельтами → правильний баланс
-- Merge → дельти злиті, buffer порожній
-- Merge часткового batch → старі дельти злиті, нові лишились
-- Конкурентний запис (100 writers, 1 dim_hash) → немає deadlock
-- Crash recovery → rebuild cache із movements
-- Переключення high_write → дельти злиті, режим змінений
-- Продуктивність: 60K ops/s на один dim_hash
+| GUC Parameter | Default | Description |
+|---|---|---|
+| `pg_accumulator.delta_merge_interval` | 5000 ms | Interval between merge cycles |
+| `pg_accumulator.delta_merge_delay` | 2000 ms | Minimum delta age before merge eligibility |
+| `pg_accumulator.delta_merge_batch_size` | 10000 | Maximum delta rows consumed per merge cycle |
+
+## SQL Sources
+
+- [sql/08_delta_buffer.sql](../../sql/08_delta_buffer.sql) — `_delta_merge_register`, `_force_delta_merge`, delta count functions
+
+## Related Tests
+
+- [test/sql/16_high_write_mode.sql](../../test/sql/16_high_write_mode.sql) — Delta buffer creation, writes, merge correctness, read accuracy with pending deltas (26 assertions)

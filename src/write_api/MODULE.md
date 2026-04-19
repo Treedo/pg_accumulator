@@ -1,106 +1,52 @@
-# Модуль: Write API (Запис даних)
+# Module: Write API
 
-## Призначення
-Публічний API для запису, скасування та перепроведення рухів у регістрах накопичення. Забезпечує валідацію вхідних даних, batch-обробку та атомарність операцій.
+**Purpose:** Public API for posting, canceling, and re-posting movements with JSON validation, batch processing, and atomic execution.
 
-## Файли
-- `post.c` — Реалізація `register_post()`
-- `unpost.c` — Реалізація `register_unpost()`
-- `repost.c` — Реалізація `register_repost()`
+## Files
 
-## Відповідальність
+- `post.c` — `register_post()` implementation
+- `unpost.c` — `register_unpost()` implementation
+- `repost.c` — `register_repost()` implementation
 
-### 1. `register_post(register_name, data)` (`post.c`)
+## Responsibilities
 
-Записує один або кілька рухів з прив'язкою до документа-реєстратора.
+### 1. `register_post(name, data)` — Post Movements
 
-**Вхід:** Ім'я регістру + JSON (об'єкт або масив об'єктів)
+- Accepts a single JSONB object or a JSONB array of objects
+- Validates JSON structure: all declared dimensions and resources must be present
+- Missing resources default to 0
+- Computes `dim_hash` per movement
+- Inserts into the movements table via SPI with parameterized queries
+- Returns the count of inserted movements
+- Triggers fire automatically, updating totals and balance_cache
 
-**Алгоритм:**
-```
-1. Знайти регістр у реєстрі → отримати метадані (dimensions, resources, types)
-2. Розпарсити JSON:
-   a) JSON-об'єкт → один рух
-   b) JSON-масив → batch рухів
-3. Для кожного руху:
-   a) Валідація: всі dimensions присутні
-   b) Валідація: всі resources присутні
-   c) Валідація: recorder не NULL
-   d) Валідація: period parseable як timestamp
-   e) Приведення типів (text → відповідний PG-тип)
-4. Формування INSERT INTO <register>_movements
-5. Виконання INSERT (тригери оновлять підсумки автоматично)
-6. Повернення кількості вставлених рядків
-```
+### 2. `register_unpost(name, recorder)` — Cancel Movements
 
-**Валідація:**
-- Невідомі поля в JSON → WARNING (ігноруються)
-- Відсутній вимір → ERROR: `dimension '<name>' is required`
-- Відсутній ресурс → DEFAULT 0
-- Невалідний тип → ERROR: `cannot cast '<value>' to <type>`
-- Порожній recorder → ERROR: `recorder is required`
+- Deletes all movements matching the given recorder from the movements table
+- AFTER DELETE triggers automatically reverse the effect on totals and balance_cache
+- Returns the count of deleted movements
 
-### 2. `register_unpost(register_name, recorder)` (`unpost.c`)
+### 3. `register_repost(name, recorder, new_data)` — Replace Movements
 
-Скасовує всі рухи за вказаним документом-реєстратором.
+- Atomic operation: delete old movements + insert new movements in a single transaction
+- Optimized path: if only resource values changed (same dimensions), computes and applies the net delta
+- Fallback path: if dimensions changed, performs full unpost + post
+- Triggers handle all derived table updates
 
-**Алгоритм:**
-```
-1. Знайти регістр у реєстрі
-2. SELECT count(*) FROM movements WHERE recorder = $1
-   → якщо 0, повернути 0 (нічого скасовувати)
-3. DELETE FROM movements WHERE recorder = $1
-   → тригер AFTER DELETE автоматично відкотить підсумки та кеш
-4. Повернути кількість видалених рядків
-```
+## Security
 
-### 3. `register_repost(register_name, recorder, new_data)` (`repost.c`)
+- All SQL execution uses SPI with parameterized queries — no string concatenation
+- JSONB input is validated against the register's declared schema before execution
+- Register names are validated against the internal registry
 
-Атомарне перепроведення: скасувати старі рухи + записати нові.
+## SQL Sources
 
-**Оптимізація (delta-підхід):**
-```
-1. Знайти старі рухи: SELECT * FROM movements WHERE recorder = $1
-2. Розпарсити нові рухи з JSON
-3. Обчислити дельту:
-   a) Для кожної комбінації dim_hash:
-      delta = NEW.resource - OLD.resource
-4. Застосувати дельту:
-   a) DELETE старих рухів
-   b) INSERT нових рухів
-   c) Оновлення підсумків через дельту (не full recalc)
-      → Мінімальна кількість UPDATE-операцій
+- [sql/05_write_api.sql](../../sql/05_write_api.sql) — `register_post`, `register_unpost`, `register_repost` function definitions
 
-Якщо dim_hash змінився (виміри переписані):
-  → Fallback на повний unpost + post
-```
+## Related Tests
 
-**Повертає:** кількість нових рухів
-
-## Безпека
-- JSON-параметри парсяться безпечно (через PostgreSQL JSONB API)
-- Значення передаються через параметризовані запити (SPI), не конкатенація
-- Recorder-значення не інтерпретуються як SQL
-
-## Залежності
-- `core/registry` — метадані регістру
-- `hash` — для обчислення dim_hash (у repost для дельта-оптимізації)
-- `triggers` — неявна залежність (тригери виконують оновлення підсумків)
-
-## SQL-файли
-- `sql/05_write_api.sql` — SQL-обгортки для C-функцій
-
-## Тести
-- POST одного руху → перевірка запису
-- POST batch (масив) → перевірка всіх рухів
-- POST з невалідним JSON → ERROR
-- POST з відсутнім виміром → ERROR
-- POST з відсутнім ресурсом → DEFAULT 0
-- POST з некоректним типом → ERROR
-- UNPOST існуючого recorder → рухи видалені
-- UNPOST неіснуючого recorder → повертає 0
-- REPOST → старі рухи замінені на нові
-- REPOST з дельта-оптимізацією → мінімум оновлень підсумків
-- REPOST з зміненими вимірами → коректний fallback
-- POST великого batch (1000+ рухів) → працює коректно
-- POST у неіснуючий регістр → ERROR
+- [test/sql/03_register_post.sql](../../test/sql/03_register_post.sql) — Single and batch posting, validation
+- [test/sql/04_register_unpost.sql](../../test/sql/04_register_unpost.sql) — Document cancellation
+- [test/sql/05_register_repost.sql](../../test/sql/05_register_repost.sql) — Atomic movement replacement
+- [test/sql/12_direct_insert.sql](../../test/sql/12_direct_insert.sql) — Trigger-based updates via raw INSERT
+- [test/sql/17_recorder_pattern.sql](../../test/sql/17_recorder_pattern.sql) — Document-based post/unpost/repost lifecycle

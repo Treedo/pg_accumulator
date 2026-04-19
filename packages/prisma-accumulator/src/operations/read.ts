@@ -11,7 +11,7 @@ import type { DimensionFilter } from '../types/pg-types';
 import { toTimestamp, sqlIdentifier } from '../utils';
 import { mapPgError } from '../errors';
 
-type Executor = { $queryRawUnsafe: (...args: unknown[]) => Promise<unknown[]> };
+type Executor = { $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T> };
 
 /**
  * Query current or historical balance.
@@ -49,7 +49,7 @@ export async function balance<
   const sql = `SELECT * FROM "${schema}".${sqlIdentifier(fnName)}(${argList})`;
 
   try {
-    const rows = await executor.$queryRawUnsafe(sql, ...params);
+    const rows = await executor.$queryRawUnsafe<unknown[]>(sql, ...params);
     if (!rows || rows.length === 0) return null;
     const row = rows[0] as Record<string, unknown>;
     // The function returns a single JSONB column or flattened resources
@@ -111,7 +111,7 @@ export async function turnover<
   const sql = `SELECT * FROM "${schema}".${sqlIdentifier(fnName)}(${argList})`;
 
   try {
-    const rows = await executor.$queryRawUnsafe(sql, ...params);
+    const rows = await executor.$queryRawUnsafe<unknown[]>(sql, ...params);
     return (rows as Record<string, unknown>[]).map((row) => {
       const val = row[fnName] ?? row;
       if (typeof val === 'string') return JSON.parse(val);
@@ -177,7 +177,7 @@ export async function movements<
   }
 
   try {
-    const rows = await executor.$queryRawUnsafe(sql, ...params);
+    const rows = await executor.$queryRawUnsafe<unknown[]>(sql, ...params);
     return (rows as Record<string, unknown>[]).map((row) => {
       const val = row[fnName] ?? row;
       if (typeof val === 'string') return JSON.parse(val);

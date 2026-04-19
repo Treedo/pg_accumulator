@@ -26,7 +26,7 @@ import { validateRegisterName } from './utils';
 
 /** Minimal Prisma client interface required */
 interface PrismaLike {
-  $queryRawUnsafe: (...args: unknown[]) => Promise<unknown[]>;
+  $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
 }
 
 /**

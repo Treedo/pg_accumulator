@@ -10,7 +10,7 @@ export async function post<
   D extends Record<string, string>,
   R extends Record<string, string>,
 >(
-  executor: { $queryRawUnsafe: (...args: unknown[]) => Promise<unknown[]> },
+  executor: { $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T> },
   schema: string,
   register: Register<D, R>,
   data: MovementInput<D, R> | MovementInput<D, R>[],
@@ -41,7 +41,7 @@ export async function unpost<
   D extends Record<string, string>,
   R extends Record<string, string>,
 >(
-  executor: { $queryRawUnsafe: (...args: unknown[]) => Promise<unknown[]> },
+  executor: { $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T> },
   schema: string,
   register: Register<D, R>,
   recorder: string,
@@ -65,7 +65,7 @@ export async function repost<
   D extends Record<string, string>,
   R extends Record<string, string>,
 >(
-  executor: { $queryRawUnsafe: (...args: unknown[]) => Promise<unknown[]> },
+  executor: { $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T> },
   schema: string,
   register: Register<D, R>,
   recorder: string,
