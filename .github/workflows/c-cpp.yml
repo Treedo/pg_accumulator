@@ -9,8 +9,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      PG_CONFIG: /usr/lib/postgresql/17/bin/pg_config
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -18,15 +16,20 @@ jobs:
       - name: Install PostgreSQL build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential postgresql-server-dev-17
+          sudo apt-get install -y build-essential postgresql-server-dev-all
 
       - name: Build extension with PGXS
         run: |
+          export PG_CONFIG=$(which pg_config)
+          echo "Using PG_CONFIG=$PG_CONFIG"
+          pg_config --version
           make clean
           make USE_PGXS=1
 
       - name: Stage extension install
-        run: make install USE_PGXS=1 DESTDIR="$GITHUB_WORKSPACE/install"
+        run: |
+          export PG_CONFIG=$(which pg_config)
+          make install USE_PGXS=1 DESTDIR="$GITHUB_WORKSPACE/install"
 
   test:
     runs-on: ubuntu-latest
