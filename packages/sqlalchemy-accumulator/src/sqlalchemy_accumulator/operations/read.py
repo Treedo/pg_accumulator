@@ -32,11 +32,11 @@ def balance(
     parts: list[str] = []
 
     if dims:
-        parts.append("dimensions := :dims::jsonb")
+        parts.append("dimensions := CAST(:dims AS jsonb)")
         params["dims"] = json.dumps(dims, default=str)
 
     if options and options.at_date is not None:
-        parts.append("at_date := :at_date::timestamptz")
+        parts.append("at_date := CAST(:at_date AS timestamptz)")
         params["at_date"] = to_timestamp(options.at_date)
 
     arg_list = ", ".join(parts)
@@ -85,19 +85,19 @@ def turnover(
     parts: list[str] = []
 
     if options and options.date_from is not None:
-        parts.append("from_date := :date_from::timestamptz")
+        parts.append("from_date := CAST(:date_from AS timestamptz)")
         params["date_from"] = to_timestamp(options.date_from)
 
     if options and options.date_to is not None:
-        parts.append("to_date := :date_to::timestamptz")
+        parts.append("to_date := CAST(:date_to AS timestamptz)")
         params["date_to"] = to_timestamp(options.date_to)
 
     if dims:
-        parts.append("dimensions := :dims::jsonb")
+        parts.append("dimensions := CAST(:dims AS jsonb)")
         params["dims"] = json.dumps(dims, default=str)
 
     if options and options.group_by:
-        parts.append("group_by := :group_by::jsonb")
+        parts.append("group_by := CAST(:group_by AS jsonb)")
         params["group_by"] = json.dumps(options.group_by)
 
     arg_list = ", ".join(parts)
@@ -143,15 +143,15 @@ def movements(
         params["recorder"] = options.recorder
 
     if options and options.date_from is not None:
-        parts.append("from_date := :date_from::timestamptz")
+        parts.append("from_date := CAST(:date_from AS timestamptz)")
         params["date_from"] = to_timestamp(options.date_from)
 
     if options and options.date_to is not None:
-        parts.append("to_date := :date_to::timestamptz")
+        parts.append("to_date := CAST(:date_to AS timestamptz)")
         params["date_to"] = to_timestamp(options.date_to)
 
     if dims:
-        parts.append("dimensions := :dims::jsonb")
+        parts.append("dimensions := CAST(:dims AS jsonb)")
         params["dims"] = json.dumps(dims, default=str)
 
     arg_list = ", ".join(parts)

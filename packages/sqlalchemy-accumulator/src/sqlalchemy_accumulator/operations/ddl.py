@@ -23,8 +23,8 @@ def create_register(conn: Connection, schema: str, register: Register) -> None:
     }
     parts = [
         "name := :name",
-        "dimensions := :dimensions::jsonb",
-        "resources := :resources::jsonb",
+        "dimensions := CAST(:dimensions AS jsonb)",
+        "resources := CAST(:resources AS jsonb)",
         "kind := :kind",
     ]
 
@@ -64,11 +64,11 @@ def alter_register(
     parts = ["p_name := :name"]
 
     if options.add_dimensions is not None:
-        parts.append("add_dimensions := :add_dimensions::jsonb")
+        parts.append("add_dimensions := CAST(:add_dimensions AS jsonb)")
         params["add_dimensions"] = json.dumps(options.add_dimensions)
 
     if options.add_resources is not None:
-        parts.append("add_resources := :add_resources::jsonb")
+        parts.append("add_resources := CAST(:add_resources AS jsonb)")
         params["add_resources"] = json.dumps(options.add_resources)
 
     if options.high_write is not None:

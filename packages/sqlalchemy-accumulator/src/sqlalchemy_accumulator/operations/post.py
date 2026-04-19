@@ -31,7 +31,7 @@ def post(
 
     try:
         result = conn.execute(
-            text(f'SELECT "{schema}".register_post(:name, :data::jsonb) AS count'),
+            text(f'SELECT "{schema}".register_post(:name, CAST(:data AS jsonb)) AS count'),
             {"name": register._def.name, "data": json_data},
         )
         row = result.mappings().fetchone()
@@ -77,7 +77,7 @@ def repost(
     try:
         result = conn.execute(
             text(
-                f'SELECT "{schema}".register_repost(:name, :recorder, :data::jsonb) AS count'
+                f'SELECT "{schema}".register_repost(:name, :recorder, CAST(:data AS jsonb)) AS count'
             ),
             {"name": register._def.name, "recorder": recorder, "data": json_data},
         )
