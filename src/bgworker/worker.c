@@ -183,7 +183,7 @@ pgacc_do_delta_merge(void)
 			 pgacc_delta_merge_batch_size);
 
 	if (pgacc_execute_sql(sql, &merged) && merged > 0)
-		elog(LOG, "pg_accumulator worker: delta merge processed %d rows", merged);
+		elog(DEBUG1, "pg_accumulator worker: delta merge processed %d rows", merged);
 
 	pgacc_advisory_unlock(PGACC_LOCK_NAMESPACE, PGACC_LOCK_DELTA);
 }
@@ -259,9 +259,9 @@ pgacc_do_stats_collection(void)
 			 "  LOOP "
 			 "    BEGIN "
 			 "      st := %s.register_stats(reg.name); "
-			 "      RAISE LOG 'pg_accumulator stats [%%]: %%', reg.name, st; "
+			 "      RAISE DEBUG1 'pg_accumulator stats [%%]: %%', reg.name, st; "
 			 "    EXCEPTION WHEN OTHERS THEN "
-			 "      RAISE LOG 'pg_accumulator stats [%%]: error — %%', "
+			 "      RAISE WARNING 'pg_accumulator stats [%%]: error — %%', "
 			 "        reg.name, SQLERRM; "
 			 "    END; "
 			 "  END LOOP; "
@@ -326,10 +326,11 @@ pg_accumulator_worker_main(Datum main_arg)
 	pqsignal(SIGHUP, pgacc_sighup_handler);
 	BackgroundWorkerUnblockSignals();
 
-	/* Connect to default database */
-	BackgroundWorkerInitializeConnection(NULL, NULL, 0);
+	/* Connect to the demo database. If dbname is NULL, only shared catalogs
+	 * are available and queries against information_schema fail. */
+	BackgroundWorkerInitializeConnection("accumulator_dev", NULL, 0);
 
-	elog(LOG, "pg_accumulator worker %d: started", worker_id);
+	elog(DEBUG1, "pg_accumulator worker %d: started", worker_id);
 
 	/*
 	 * Wait for the schema to become available. The extension or setup
@@ -363,7 +364,7 @@ pg_accumulator_worker_main(Datum main_arg)
 		proc_exit(0);
 	}
 
-	elog(LOG, "pg_accumulator worker %d: schema ready, entering maintenance loop",
+	elog(DEBUG1, "pg_accumulator worker %d: schema ready, entering maintenance loop",
 		 worker_id);
 
 	/* ---- Main maintenance loop ---- */

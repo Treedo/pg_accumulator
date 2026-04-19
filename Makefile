@@ -2,7 +2,7 @@
 # PostgreSQL Extension Build System
 
 EXTENSION    = pg_accumulator
-EXTVERSION   = 0.1.0
+EXTVERSION   = 1.0.3
 MODULE_big   = pg_accumulator
 
 # Only list source files that actually exist.

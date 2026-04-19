@@ -148,7 +148,6 @@ _PG_init(void)
 		worker.bgw_restart_time = 10;   /* restart after 10s on crash */
 		worker.bgw_main_arg = Int32GetDatum(i);
 		worker.bgw_notify_pid = 0;
-
 		RegisterBackgroundWorker(&worker);
 	}
 
