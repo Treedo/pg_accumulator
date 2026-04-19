@@ -25,7 +25,7 @@ cd demo/typescript
 docker compose up --build
 ```
 
-Open in browser: **http://localhost:3001**
+Open in browser: **http://localhost:3302**
 
 > Database data is stored in the `pgdata_ts` volume. For a clean start:
 > ```bash
@@ -36,7 +36,7 @@ Open in browser: **http://localhost:3001**
 
 | Service | Port |
 |---|---|
-| Web app | `3001` |
+| Web app | `3302` |
 | PostgreSQL | `5435` |
 
 ## Shutdown

@@ -18,7 +18,7 @@ cd demo/python
 docker compose up --build
 ```
 
-Open in browser: **http://localhost:5001**
+Open in browser: **http://localhost:3301**
 
 ## Project Structure
 
@@ -33,7 +33,7 @@ demo/python/
 
 ## Demo Walkthrough
 
-1. Open http://localhost:5001
+1. Open http://localhost:3301
 2. See initial balances (6 movements are pre-loaded)
 3. Post a new receipt: `receipt:5`, warehouse 1, product 1, quantity 50, amount 25000
 4. Observe that the balance updates instantly

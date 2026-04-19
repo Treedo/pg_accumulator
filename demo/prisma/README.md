@@ -19,7 +19,7 @@ cd demo/prisma
 docker compose up --build
 ```
 
-Open in browser: **http://localhost:3002**
+Open in browser: **http://localhost:3303**
 
 ## Architecture
 

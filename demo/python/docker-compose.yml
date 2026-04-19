@@ -29,7 +29,7 @@ services:
       dockerfile: Dockerfile
     container_name: pg_accumulator_demo_py_app
     ports:
-      - "5001:5000"
+      - "3301:5000"
     environment:
       DATABASE_URL: "host=postgres dbname=accumulator_dev user=dev password=dev_password"
     depends_on:

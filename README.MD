@@ -30,6 +30,7 @@ Declarative accumulation registers that provide instant access to balances and t
 - [Compaction Strategy](#compaction-strategy)
 - [Benchmarks](#benchmarks)
 - [Demo Applications](#demo-applications)
+- [Package Ecosystem](#package-ecosystem)
 - [Prisma ORM Integration](#prisma-orm-integration)
 - [Testing](#testing)
 - [Configuration](#configuration)
@@ -558,11 +559,12 @@ psql -f bench/sql/bench.sql
 
 Interactive demo applications are available for different technology stacks:
 
-| Demo | Stack | Port | Documentation |
-|---|---|---|---|
-| **Python** | Flask + psycopg2 | `localhost:5001` | [demo/python/README.md](demo/python/README.md) |
-| **TypeScript** | Express + pg | `localhost:3001` | [demo/typescript/README.md](demo/typescript/README.md) |
-| **Prisma** | Express + Prisma ORM + prisma-accumulator | `localhost:3002` | [demo/prisma/README.md](demo/prisma/README.md) |
+| Demo | Stack | App URL | PostgreSQL Port | Documentation |
+|---|---|---|---|---|
+| **Python** | Flask + psycopg2 | `localhost:3301` | `5434` | [demo/python/README.md](demo/python/README.md) |
+| **TypeScript** | Express + pg | `localhost:3302` | `5435` | [demo/typescript/README.md](demo/typescript/README.md) |
+| **Prisma** | Express + Prisma ORM + prisma-accumulator | `localhost:3303` | `5436` | [demo/prisma/README.md](demo/prisma/README.md) |
+| **SQLAlchemy** | Flask + SQLAlchemy + sqlalchemy-accumulator | `localhost:3304` | `5437` | [demo/sqlalchemy/README.md](demo/sqlalchemy/README.md) |
 
 Each demo demonstrates:
 - Register creation and initialization
@@ -574,9 +576,21 @@ Each demo demonstrates:
 
 ```bash
 # Start any demo
-cd demo/python   # or demo/typescript, demo/prisma
+cd demo/python   # or demo/typescript, demo/prisma, demo/sqlalchemy
 docker compose up --build
 ```
+
+---
+
+## Package Ecosystem
+
+The repository currently contains three integration packages:
+
+| Package | Language | Purpose | Documentation |
+|---|---|---|---|
+| **prisma-accumulator** | TypeScript | Type-safe adapter for Prisma ORM | [packages/prisma-accumulator/README.md](packages/prisma-accumulator/README.md) |
+| **sqlalchemy-accumulator** | Python | SQLAlchemy-first adapter with typed operations | [packages/sqlalchemy-accumulator/CONCEPT.md](packages/sqlalchemy-accumulator/CONCEPT.md) |
+| **go-accumulator** | Go | Planned Go integration package | [packages/go-accumulator/CONCEPT.md](packages/go-accumulator/CONCEPT.md) |
 
 ---
 

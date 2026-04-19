@@ -3,15 +3,15 @@ services:
     build:
       context: ../..
       dockerfile: docker/Dockerfile
-    container_name: pg_accumulator_prisma_db
+    container_name: pg_accumulator_demo_sa_db
     ports:
-      - "5436:5432"
+      - "5437:5432"
     environment:
       POSTGRES_DB: accumulator_dev
       POSTGRES_USER: dev
       POSTGRES_PASSWORD: dev_password
     volumes:
-      - pgdata_prisma:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/02-demo-init.sql:ro
     command: >
       postgres
@@ -21,21 +21,20 @@ services:
       test: ["CMD-SHELL", "pg_isready -U dev -d accumulator_dev"]
       interval: 3s
       timeout: 3s
-      retries: 15
+      retries: 10
 
   app:
     build:
       context: ../..
-      dockerfile: demo/prisma/Dockerfile
-    container_name: pg_accumulator_prisma_app
+      dockerfile: demo/sqlalchemy/Dockerfile
+    container_name: pg_accumulator_demo_sa_app
     ports:
-      - "3303:3000"
+      - "3304:3304"
     environment:
       DATABASE_URL: "postgresql://dev:dev_password@postgres:5432/accumulator_dev"
-      PORT: "3000"
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
-  pgdata_prisma:
+  pgdata:

@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pg_accumulator — SQLAlchemy Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+        a { color: #58a6ff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        h1 { color: #58a6ff; margin-bottom: 4px; font-size: 1.6em; }
+        h2 { margin: 20px 0 10px; color: #8b949e; font-size: 1.1em; text-transform: uppercase; letter-spacing: 1px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        .subtitle { color: #8b949e; margin-bottom: 20px; font-size: 0.95em; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 700; margin-left: 8px; vertical-align: middle; }
+        .badge-sa { background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; }
+
+        /* Tabs */
+        .tabs { display: flex; gap: 0; border-bottom: 1px solid #30363d; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; transition: all 0.2s; font-size: 0.9em; }
+        .tab:hover { color: #c9d1d9; }
+        .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Flash messages */
+        .flash { padding: 10px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 0.9em; border: 1px solid; }
+        .flash.success { background: #0d1f0d; color: #3fb950; border-color: #238636; }
+        .flash.error { background: #1f0d0d; color: #f85149; border-color: #da3633; }
+
+        /* Cards */
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; }
+
+        /* Code block */
+        .code-hint { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 12px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.82em; color: #8b949e; margin-top: 12px; white-space: pre-wrap; line-height: 1.5; }
+        .code-hint .kw { color: #ff7b72; }
+        .code-hint .fn { color: #d2a8ff; }
+        .code-hint .str { color: #a5d6ff; }
+        .code-hint .comment { color: #484f58; }
+        .code-hint .var { color: #ffa657; }
+
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #21262d; }
+        th { color: #8b949e; font-weight: 600; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.5px; }
+        tr:hover { background: #1c2128; }
+        td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: 'SF Mono', monospace; }
+        .positive { color: #3fb950; }
+        .negative { color: #f85149; }
+
+        /* Forms */
+        form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .field label { font-size: 0.78em; color: #8b949e; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .field input, .field select { padding: 6px 10px; border: 1px solid #30363d; border-radius: 4px; font-size: 0.88em; background: #0d1117; color: #c9d1d9; }
+        .field input:focus, .field select:focus { outline: none; border-color: #58a6ff; box-shadow: 0 0 0 2px rgba(88,166,255,0.2); }
+        .field select { cursor: pointer; }
+        button { padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.88em; font-weight: 600; transition: background 0.15s; }
+        .btn-primary { background: #238636; color: #fff; }
+        .btn-primary:hover { background: #2ea043; }
+        .btn-danger { background: #da3633; color: #fff; }
+        .btn-danger:hover { background: #f85149; }
+        .btn-info { background: #1f6feb; color: #fff; }
+        .btn-info:hover { background: #388bfd; }
+        .btn-secondary { background: #30363d; color: #c9d1d9; }
+        .btn-secondary:hover { background: #484f58; }
+
+        /* API result */
+        .api-result { margin-top: 12px; padding: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; display: none; max-height: 300px; overflow-y: auto; }
+        .api-result pre { white-space: pre-wrap; font-size: 0.82em; font-family: 'SF Mono', monospace; color: #a5d6ff; }
+
+        /* Empty state */
+        .empty { text-align: center; color: #484f58; padding: 24px; font-style: italic; }
+
+        /* Registers info */
+        .reg-card { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #21262d; }
+        .reg-card:last-child { border-bottom: none; }
+        .reg-name { font-weight: 700; color: #c9d1d9; }
+        .reg-kind { font-size: 0.8em; padding: 2px 8px; border-radius: 12px; }
+        .reg-kind-balance { background: #0d1f0d; color: #3fb950; border: 1px solid #238636; }
+        .reg-kind-turnover { background: #1f1a0d; color: #d29922; border: 1px solid #9e6a03; }
+        .reg-meta { font-size: 0.82em; color: #8b949e; }
+
+        /* Header */
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
+        .header-left { display: flex; align-items: center; gap: 12px; }
+        .header-links { display: flex; gap: 16px; font-size: 0.88em; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <h1>pg_accumulator<span class="badge badge-sa">SQLAlchemy</span></h1>
+        </div>
+        <div class="header-links">
+            <a href="https://github.com/Treedo/pg_accumulator" target="_blank">GitHub</a>
+            <a href="#" onclick="document.getElementById('code-tab').click(); return false;">Code Examples</a>
+        </div>
+    </div>
+    <p class="subtitle">Interactive demo of <strong>sqlalchemy-accumulator</strong> — the type-safe Python adapter for pg_accumulator</p>
+
+    <!-- Flash messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    {% if error %}
+    <div class="flash error">{{ error }}</div>
+    {% endif %}
+
+    <!-- Tabs -->
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('operations')" id="ops-tab">Operations</div>
+        <div class="tab" onclick="switchTab('orders')" id="orders-tab">Orders (ORM+Accum)</div>
+        <div class="tab" onclick="switchTab('catalog')" id="catalog-tab">Catalog (ORM)</div>
+        <div class="tab" onclick="switchTab('data')" id="data-tab">Live Data</div>
+        <div class="tab" onclick="switchTab('api')" id="api-tab">Query API</div>
+        <div class="tab" onclick="switchTab('code')" id="code-tab">Code Examples</div>
+        <div class="tab" onclick="switchTab('registers')" id="reg-tab">Registers</div>
+    </div>
+
+    <!-- TAB: Operations -->
+    <div class="tab-content active" id="tab-operations">
+        <div class="grid">
+            <!-- Post -->
+            <div class="card">
+                <h2 style="margin-top:0">Post Movement</h2>
+                <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Record inventory receipt or shipment via <code>handle.post()</code></p>
+                <form method="POST" action="/post">
+                    <div class="field">
+                        <label>Recorder</label>
+                        <input name="recorder" placeholder="receipt:101" required>
+                    </div>
+                    <div class="field">
+                        <label>Date</label>
+                        <input name="period" type="date">
+                    </div>
+                    <div class="field">
+                        <label>Warehouse</label>
+                        <input name="warehouse" type="number" min="1" value="1" required style="width:70px">
+                    </div>
+                    <div class="field">
+                        <label>Product</label>
+                        <input name="product" type="number" min="1" value="101" required style="width:80px">
+                    </div>
+                    <div class="field">
+                        <label>Qty</label>
+                        <input name="quantity" type="number" step="0.01" value="100" required style="width:90px">
+                    </div>
+                    <div class="field">
+                        <label>Amount</label>
+                        <input name="amount" type="number" step="0.01" value="25000" required style="width:100px">
+                    </div>
+                    <button type="submit" class="btn-primary">Post</button>
+                </form>
+            </div>
+
+            <!-- Unpost -->
+            <div class="card">
+                <h2 style="margin-top:0">Unpost Document</h2>
+                <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Cancel all movements for a recorder via <code>handle.unpost()</code></p>
+                <form method="POST" action="/unpost">
+                    <div class="field">
+                        <label>Recorder</label>
+                        <input name="recorder" placeholder="receipt:101" required>
+                    </div>
+                    <button type="submit" class="btn-danger">Unpost</button>
+                </form>
+
+                <h2>Repost (Correct)</h2>
+                <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Atomically replace movements via <code>handle.repost()</code></p>
+                <form method="POST" action="/repost">
+                    <div class="field">
+                        <label>Recorder</label>
+                        <input name="recorder" placeholder="receipt:1" required>
+                    </div>
+                    <div class="field">
+                        <label>Date</label>
+                        <input name="period" type="date">
+                    </div>
+                    <div class="field">
+                        <label>WH</label>
+                        <input name="warehouse" type="number" min="1" value="1" required style="width:60px">
+                    </div>
+                    <div class="field">
+                        <label>Product</label>
+                        <input name="product" type="number" min="1" value="101" required style="width:80px">
+                    </div>
+                    <div class="field">
+                        <label>Qty</label>
+                        <input name="quantity" type="number" step="0.01" value="100" required style="width:80px">
+                    </div>
+                    <div class="field">
+                        <label>Amount</label>
+                        <input name="amount" type="number" step="0.01" value="25000" required style="width:90px">
+                    </div>
+                    <button type="submit" class="btn-info">Repost</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: Orders (ORM + Accumulator in same transaction) -->
+    <div class="tab-content" id="tab-orders">
+        <div class="grid">
+            <div class="card">
+                <h2 style="margin-top:0">Create Order <span style="font-size:0.65em; color:#3fb950;">(ORM + Accumulator)</span></h2>
+                <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">
+                    Creates an ORM Order <strong>and</strong> posts inventory movement in a <strong>single transaction</strong>
+                </p>
+                <form method="POST" action="/orders/create">
+                    <div class="field">
+                        <label>Client</label>
+                        <select name="client_id" required>
+                            {% for c in clients %}
+                            <option value="{{ c.id }}">{{ c.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Warehouse</label>
+                        <select name="warehouse_id" required>
+                            {% for w in warehouses %}
+                            <option value="{{ w.id }}">{{ w.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Product</label>
+                        <select name="product_id" required>
+                            {% for p in products %}
+                            <option value="{{ p.id }}">{{ p.name }} (${{ p.unit_price }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Qty</label>
+                        <input name="quantity" type="number" step="1" min="1" value="10" required style="width:80px">
+                    </div>
+                    <button type="submit" class="btn-primary">Create &amp; Post</button>
+                </form>
+                <div class="code-hint" style="margin-top:16px; font-size:0.78em;">
+<span class="comment"># What happens behind the scenes:</span>
+<span class="kw">with</span> Session(engine) <span class="kw">as</span> <span class="var">session</span>:
+    <span class="comment"># 1) ORM: create order + order line</span>
+    <span class="var">session</span>.<span class="fn">add</span>(<span class="var">order</span>)
+    <span class="var">session</span>.<span class="fn">flush</span>()
+
+    <span class="comment"># 2) Accumulator: post movement (same tx!)</span>
+    <span class="var">accum</span> = AccumulatorClient(<span class="var">session</span>)
+    <span class="var">accum</span>.<span class="fn">use</span>(<span class="var">inventory</span>).<span class="fn">post</span>({...})
+
+    <span class="var">session</span>.<span class="fn">commit</span>()  <span class="comment"># atomic!</span></div>
+            </div>
+
+            <div class="card">
+                <h2 style="margin-top:0">Recent Orders</h2>
+                {% if orders %}
+                <table>
+                    <thead>
+                        <tr><th>#</th><th>Client</th><th>Warehouse</th><th>Status</th><th>Action</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for o in orders %}
+                        <tr>
+                            <td>{{ o.id }}</td>
+                            <td>{{ o.client.name if o.client else '?' }}</td>
+                            <td>{{ o.warehouse.name if o.warehouse else '?' }}</td>
+                            <td>
+                                {% if o.status == 'posted' %}
+                                <span style="color:#3fb950">&#9679;</span> posted
+                                {% elif o.status == 'cancelled' %}
+                                <span style="color:#f85149">&#9679;</span> cancelled
+                                {% else %}
+                                <span style="color:#8b949e">&#9679;</span> {{ o.status }}
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if o.status == 'posted' %}
+                                <form method="POST" action="/orders/{{ o.id }}/cancel" style="display:inline; gap:0;">
+                                    <button type="submit" class="btn-danger" style="padding:4px 10px; font-size:0.8em;">Cancel</button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty">No orders yet. Create one to see ORM + Accumulator in action.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: Catalog (pure ORM) -->
+    <div class="tab-content" id="tab-catalog">
+        <div class="grid">
+            <!-- Warehouses -->
+            <div class="card">
+                <h2 style="margin-top:0">Warehouses <span style="font-size:0.65em; color:#8b949e;">(SQLAlchemy ORM)</span></h2>
+                {% if warehouses %}
+                <table>
+                    <thead><tr><th>ID</th><th>Name</th><th>Address</th></tr></thead>
+                    <tbody>
+                        {% for w in warehouses %}
+                        <tr><td>{{ w.id }}</td><td>{{ w.name }}</td><td>{{ w.address or '—' }}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+                <h2>Add Warehouse</h2>
+                <form method="POST" action="/warehouses/add">
+                    <div class="field">
+                        <label>Name</label>
+                        <input name="name" placeholder="New Warehouse" required>
+                    </div>
+                    <div class="field">
+                        <label>Address</label>
+                        <input name="address" placeholder="123 Main St">
+                    </div>
+                    <button type="submit" class="btn-primary">Add</button>
+                </form>
+            </div>
+
+            <!-- Products -->
+            <div class="card">
+                <h2 style="margin-top:0">Products <span style="font-size:0.65em; color:#8b949e;">(SQLAlchemy ORM)</span></h2>
+                {% if products %}
+                <table>
+                    <thead><tr><th>ID</th><th>SKU</th><th>Name</th><th>Price</th><th>Category</th></tr></thead>
+                    <tbody>
+                        {% for p in products %}
+                        <tr>
+                            <td>{{ p.id }}</td>
+                            <td><code>{{ p.sku }}</code></td>
+                            <td>{{ p.name }}</td>
+                            <td class="num">${{ p.unit_price }}</td>
+                            <td>{{ p.category or '—' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+                <h2>Add Product</h2>
+                <form method="POST" action="/products/add">
+                    <div class="field">
+                        <label>SKU</label>
+                        <input name="sku" placeholder="NEW-001" required style="width:90px">
+                    </div>
+                    <div class="field">
+                        <label>Name</label>
+                        <input name="name" placeholder="New Product" required>
+                    </div>
+                    <div class="field">
+                        <label>Price</label>
+                        <input name="unit_price" type="number" step="0.01" value="100" style="width:90px">
+                    </div>
+                    <div class="field">
+                        <label>Category</label>
+                        <input name="category" placeholder="General">
+                    </div>
+                    <button type="submit" class="btn-primary">Add</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Clients -->
+        <div class="card" style="margin-top:16px">
+            <h2 style="margin-top:0">Clients <span style="font-size:0.65em; color:#8b949e;">(SQLAlchemy ORM)</span></h2>
+            <div class="grid" style="margin-bottom:0">
+                <div>
+                    {% if clients %}
+                    <table>
+                        <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Phone</th></tr></thead>
+                        <tbody>
+                            {% for c in clients %}
+                            <tr>
+                                <td>{{ c.id }}</td>
+                                <td>{{ c.name }}</td>
+                                <td>{{ c.email or '—' }}</td>
+                                <td>{{ c.phone or '—' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% endif %}
+                </div>
+                <div>
+                    <h2 style="margin-top:0">Add Client</h2>
+                    <form method="POST" action="/clients/add">
+                        <div class="field">
+                            <label>Name</label>
+                            <input name="name" placeholder="Company Name" required>
+                        </div>
+                        <div class="field">
+                            <label>Email</label>
+                            <input name="email" type="email" placeholder="info@example.com">
+                        </div>
+                        <div class="field">
+                            <label>Phone</label>
+                            <input name="phone" placeholder="+1-555-0000">
+                        </div>
+                        <button type="submit" class="btn-primary">Add</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: Live Data -->
+    <div class="tab-content" id="tab-data">
+        <!-- Current balances -->
+        <h2>Current Balances <span style="font-size:0.7em; color:#484f58;">(from balance_cache — O(1) reads)</span></h2>
+        <div class="card">
+            {% if balances %}
+            <table>
+                <thead>
+                    <tr><th>Warehouse</th><th>Product</th><th>Quantity</th><th>Amount</th></tr>
+                </thead>
+                <tbody>
+                    {% for b in balances %}
+                    <tr>
+                        <td>{{ b.warehouse }} — {{ b.warehouse_name }}</td>
+                        <td>{{ b.product }} — {{ b.product_name }}</td>
+                        <td class="num {% if b.quantity > 0 %}positive{% elif b.quantity < 0 %}negative{% endif %}">{{ b.quantity }}</td>
+                        <td class="num {% if b.amount > 0 %}positive{% elif b.amount < 0 %}negative{% endif %}">{{ b.amount }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty">No balance data yet. Post some movements first.</div>
+            {% endif %}
+        </div>
+
+        <!-- Recent movements -->
+        <h2>Recent Movements <span style="font-size:0.7em; color:#484f58;">(via handle.movements(limit=50))</span></h2>
+        <div class="card">
+            {% if movements %}
+            <table>
+                <thead>
+                    <tr><th>Recorder</th><th>Period</th><th>Warehouse</th><th>Product</th><th>Quantity</th><th>Amount</th></tr>
+                </thead>
+                <tbody>
+                    {% for m in movements %}
+                    <tr>
+                        <td>{{ m.get('recorder', '') }}</td>
+                        <td>{{ m.get('period', '')[:10] if m.get('period') else '' }}</td>
+                        <td>{{ m.get('warehouse', '') }} — {{ m.get('warehouse_name', '') }}</td>
+                        <td>{{ m.get('product', '') }} — {{ m.get('product_name', '') }}</td>
+                        <td class="num {% if m.get('quantity', 0)|float > 0 %}positive{% elif m.get('quantity', 0)|float < 0 %}negative{% endif %}">
+                            {{ m.get('quantity', '') }}
+                        </td>
+                        <td class="num {% if m.get('amount', 0)|float > 0 %}positive{% elif m.get('amount', 0)|float < 0 %}negative{% endif %}">
+                            {{ m.get('amount', '') }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty">No movements recorded yet.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- TAB: Query API -->
+    <div class="tab-content" id="tab-api">
+        <div class="grid">
+            <div class="card">
+                <h2 style="margin-top:0">Balance Query</h2>
+                <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Get instant balance via <code>handle.balance()</code></p>
+                <form id="balance-form" onsubmit="return queryAPI('balance')">
+                    <div class="field">
+                        <label>Warehouse</label>
+                        <input id="bal-wh" type="number" min="1" style="width:70px">
+                    </div>
+                    <div class="field">
+                        <label>Product</label>
+                        <input id="bal-pr" type="number" min="1" style="width:80px">
+                    </div>
+                    <div class="field">
+                        <label>At Date</label>
+                        <input id="bal-date" type="date">
+                    </div>
+                    <button type="submit" class="btn-secondary">Query</button>
+                </form>
+                <div class="api-result" id="balance-result"><pre></pre></div>
+            </div>
+
+            <div class="card">
+                <h2 style="margin-top:0">Turnover Query</h2>
+                <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Aggregate turnover via <code>handle.turnover()</code></p>
+                <form id="turnover-form" onsubmit="return queryAPI('turnover')">
+                    <div class="field">
+                        <label>Warehouse</label>
+                        <input id="turn-wh" type="number" min="1" style="width:70px">
+                    </div>
+                    <div class="field">
+                        <label>Product</label>
+                        <input id="turn-pr" type="number" min="1" style="width:80px">
+                    </div>
+                    <div class="field">
+                        <label>From</label>
+                        <input id="turn-from" type="date">
+                    </div>
+                    <div class="field">
+                        <label>To</label>
+                        <input id="turn-to" type="date">
+                    </div>
+                    <button type="submit" class="btn-secondary">Query</button>
+                </form>
+                <div class="api-result" id="turnover-result"><pre></pre></div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h2 style="margin-top:0">Movements Query</h2>
+            <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Browse movement history via <code>handle.movements()</code></p>
+            <form id="movements-form" onsubmit="return queryAPI('movements')">
+                <div class="field">
+                    <label>Recorder</label>
+                    <input id="mov-rec" placeholder="receipt:1">
+                </div>
+                <div class="field">
+                    <label>Limit</label>
+                    <input id="mov-limit" type="number" value="20" style="width:70px">
+                </div>
+                <button type="submit" class="btn-secondary">Query</button>
+            </form>
+            <div class="api-result" id="movements-result"><pre></pre></div>
+        </div>
+    </div>
+
+    <!-- TAB: Code Examples -->
+    <div class="tab-content" id="tab-code">
+        <div class="card">
+            <h2 style="margin-top:0">1. Define a Register</h2>
+            <div class="code-hint"><span class="kw">from</span> sqlalchemy_accumulator <span class="kw">import</span> <span class="fn">define_register</span>
+
+<span class="var">inventory</span> = <span class="fn">define_register</span>(
+    name=<span class="str">"inventory"</span>,
+    kind=<span class="str">"balance"</span>,
+    dimensions={<span class="str">"warehouse"</span>: <span class="str">"int"</span>, <span class="str">"product"</span>: <span class="str">"int"</span>},
+    resources={<span class="str">"quantity"</span>: <span class="str">"numeric(18,4)"</span>, <span class="str">"amount"</span>: <span class="str">"numeric(18,2)"</span>},
+)</div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h2 style="margin-top:0">2. Create Client &amp; Register</h2>
+            <div class="code-hint"><span class="kw">from</span> sqlalchemy <span class="kw">import</span> create_engine
+<span class="kw">from</span> sqlalchemy_accumulator <span class="kw">import</span> AccumulatorClient
+
+<span class="var">engine</span> = create_engine(<span class="str">"postgresql://user:pass@localhost/mydb"</span>)
+<span class="var">accum</span> = AccumulatorClient(<span class="var">engine</span>)
+
+<span class="comment"># Create the register in the database (one-time)</span>
+<span class="var">accum</span>.<span class="fn">create_register</span>(<span class="var">inventory</span>)</div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h2 style="margin-top:0">3. Post &amp; Query</h2>
+            <div class="code-hint"><span class="var">handle</span> = <span class="var">accum</span>.<span class="fn">use</span>(<span class="var">inventory</span>)
+
+<span class="comment"># Post a warehouse receipt</span>
+<span class="var">handle</span>.<span class="fn">post</span>({
+    <span class="str">"recorder"</span>: <span class="str">"receipt:1"</span>,
+    <span class="str">"period"</span>:   <span class="str">"2026-04-01"</span>,
+    <span class="str">"warehouse"</span>: 1, <span class="str">"product"</span>: 101,
+    <span class="str">"quantity"</span>: 500, <span class="str">"amount"</span>: 125000,
+})
+
+<span class="comment"># Instant balance — O(1) from materialized cache</span>
+<span class="var">bal</span> = <span class="var">handle</span>.<span class="fn">balance</span>(warehouse=1, product=101)
+<span class="comment"># {'quantity': Decimal('500'), 'amount': Decimal('125000')}</span>
+
+<span class="comment"># Historical balance at a specific date</span>
+<span class="var">bal</span> = <span class="var">handle</span>.<span class="fn">balance</span>(warehouse=1, at_date=<span class="str">"2026-04-01"</span>)
+
+<span class="comment"># Undo a document — all movements reversed atomically</span>
+<span class="var">handle</span>.<span class="fn">unpost</span>(<span class="str">"receipt:1"</span>)
+
+<span class="comment"># Correct a document — atomic repost</span>
+<span class="var">handle</span>.<span class="fn">repost</span>(<span class="str">"receipt:1"</span>, {
+    <span class="str">"recorder"</span>: <span class="str">"receipt:1"</span>,
+    <span class="str">"period"</span>:   <span class="str">"2026-04-01"</span>,
+    <span class="str">"warehouse"</span>: 1, <span class="str">"product"</span>: 101,
+    <span class="str">"quantity"</span>: 600, <span class="str">"amount"</span>: 150000,
+})</div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h2 style="margin-top:0">4. ORM + Accumulator — Same Transaction</h2>
+            <div class="code-hint"><span class="kw">from</span> sqlalchemy.orm <span class="kw">import</span> Session
+
+<span class="kw">with</span> Session(<span class="var">engine</span>) <span class="kw">as</span> <span class="var">session</span>:
+    <span class="comment"># 1) Create ORM entities as usual</span>
+    <span class="var">order</span> = Order(client_id=1, warehouse_id=1, status=<span class="str">"posted"</span>)
+    <span class="var">session</span>.<span class="fn">add</span>(<span class="var">order</span>)
+    <span class="var">session</span>.<span class="fn">flush</span>()  <span class="comment"># get order.id</span>
+
+    <span class="var">session</span>.<span class="fn">add</span>(OrderLine(
+        order_id=<span class="var">order</span>.id, product_id=101,
+        quantity=50, unit_price=250, amount=12500,
+    ))
+
+    <span class="comment"># 2) Post accumulator movement in the SAME transaction</span>
+    <span class="var">accum</span> = AccumulatorClient(<span class="var">session</span>)
+    <span class="var">accum</span>.<span class="fn">use</span>(<span class="var">inventory</span>).<span class="fn">post</span>({
+        <span class="str">"recorder"</span>: <span class="str">f"order:{order.id}"</span>,
+        <span class="str">"period"</span>: <span class="str">"2026-04-19"</span>,
+        <span class="str">"warehouse"</span>: 1, <span class="str">"product"</span>: 101,
+        <span class="str">"quantity"</span>: -50, <span class="str">"amount"</span>: -12500,
+    })
+
+    <span class="comment"># 3) Both ORM and accumulator commit atomically</span>
+    <span class="var">session</span>.<span class="fn">commit</span>()
+    <span class="comment"># If anything fails — everything rolls back!</span></div>
+        </div>
+    </div>
+
+    <!-- TAB: Registers -->
+    <div class="tab-content" id="tab-registers">
+        <h2>Registered Accumulation Registers</h2>
+        <div class="card">
+            {% if registers %}
+                {% for r in registers %}
+                <div class="reg-card">
+                    <span class="reg-name">{{ r.name }}</span>
+                    <span class="reg-kind reg-kind-{{ r.kind }}">{{ r.kind }}</span>
+                    <span class="reg-meta">{{ r.dimensions }} dims &middot; {{ r.resources }} resources &middot; {{ r.movements_count }} movements</span>
+                </div>
+                {% endfor %}
+            {% else %}
+            <div class="empty">No registers found. Check database connection.</div>
+            {% endif %}
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h2 style="margin-top:0">Register Details</h2>
+            <form onsubmit="return fetchRegisterInfo()">
+                <div class="field">
+                    <label>Name</label>
+                    <input id="info-name" value="inventory">
+                </div>
+                <button type="submit" class="btn-secondary">Get Info</button>
+            </form>
+            <div class="api-result" id="info-result"><pre></pre></div>
+        </div>
+    </div>
+</div>
+
+<script>
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    const tabBtn = {operations:'ops-tab', orders:'orders-tab', catalog:'catalog-tab', data:'data-tab', api:'api-tab', code:'code-tab', registers:'reg-tab'};
+    document.getElementById(tabBtn[name]).classList.add('active');
+}
+
+function queryAPI(type) {
+    let params = new URLSearchParams();
+    let resultEl, url;
+
+    if (type === 'balance') {
+        const wh = document.getElementById('bal-wh').value;
+        const pr = document.getElementById('bal-pr').value;
+        const dt = document.getElementById('bal-date').value;
+        if (wh) params.set('warehouse', wh);
+        if (pr) params.set('product', pr);
+        if (dt) params.set('at_date', dt);
+        url = '/api/balance';
+        resultEl = document.getElementById('balance-result');
+    } else if (type === 'turnover') {
+        const wh = document.getElementById('turn-wh').value;
+        const pr = document.getElementById('turn-pr').value;
+        const df = document.getElementById('turn-from').value;
+        const dt = document.getElementById('turn-to').value;
+        if (wh) params.set('warehouse', wh);
+        if (pr) params.set('product', pr);
+        if (df) params.set('date_from', df);
+        if (dt) params.set('date_to', dt);
+        url = '/api/turnover';
+        resultEl = document.getElementById('turnover-result');
+    } else if (type === 'movements') {
+        const rec = document.getElementById('mov-rec').value;
+        const lim = document.getElementById('mov-limit').value;
+        if (rec) params.set('recorder', rec);
+        if (lim) params.set('limit', lim);
+        url = '/api/movements';
+        resultEl = document.getElementById('movements-result');
+    }
+
+    fetch(url + '?' + params.toString())
+        .then(r => r.json())
+        .then(data => {
+            resultEl.querySelector('pre').textContent = JSON.stringify(data, null, 2);
+            resultEl.style.display = 'block';
+        })
+        .catch(err => {
+            resultEl.querySelector('pre').textContent = 'Error: ' + err;
+            resultEl.style.display = 'block';
+        });
+    return false;
+}
+
+function fetchRegisterInfo() {
+    const name = document.getElementById('info-name').value;
+    const resultEl = document.getElementById('info-result');
+    fetch('/api/register-info/' + encodeURIComponent(name))
+        .then(r => r.json())
+        .then(data => {
+            resultEl.querySelector('pre').textContent = JSON.stringify(data, null, 2);
+            resultEl.style.display = 'block';
+        })
+        .catch(err => {
+            resultEl.querySelector('pre').textContent = 'Error: ' + err;
+            resultEl.style.display = 'block';
+        });
+    return false;
+}
+</script>
+</body>
+</html>

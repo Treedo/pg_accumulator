@@ -11,7 +11,7 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-const PORT = process.env.PORT ?? 3000;
+const PORT = process.env.PORT ?? 3303;
 
 // --- Helpers: product/warehouse names from DB ---
 async function getProducts() {

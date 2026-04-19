@@ -52,6 +52,10 @@
 - [Configuration](#configuration)
 - [Compatibility](#compatibility)
 - [FAQ](#faq)
+- [Ecosystem](#ecosystem)
+    - [Demo Applications](#demo-applications)
+    - [Official Packages](#official-packages)
+- [Module Documentation](#module-documentation)
 - [License](#license)
 
 ---
@@ -1526,6 +1530,27 @@ A: Yes, via `register_alter()`. The new dimension column is added with a nullabl
 
 **Q: Does the extension work without the background worker?**  
 A: Yes, for most features. The background worker handles delta buffer merges (required for high-write mode consistency) and proactive partition creation. Without it, set `pg_accumulator.background_workers = 0` and manage these manually using `_force_delta_merge()` and `register_create_partitions()`.
+
+---
+
+## Ecosystem
+
+### Demo Applications
+
+| Demo | Stack | App URL | PostgreSQL Port | Documentation |
+|---|---|---|---|---|
+| Python | Flask + psycopg2 | `http://localhost:3301` | `5434` | [demo/python/README.md](../demo/python/README.md) |
+| TypeScript | Express + pg | `http://localhost:3302` | `5435` | [demo/typescript/README.md](../demo/typescript/README.md) |
+| Prisma | Express + Prisma ORM + prisma-accumulator | `http://localhost:3303` | `5436` | [demo/prisma/README.md](../demo/prisma/README.md) |
+| SQLAlchemy | Flask + SQLAlchemy + sqlalchemy-accumulator | `http://localhost:3304` | `5437` | [demo/sqlalchemy/README.md](../demo/sqlalchemy/README.md) |
+
+### Official Packages
+
+| Package | Language | Status | Documentation |
+|---|---|---|---|
+| prisma-accumulator | TypeScript | Implemented | [packages/prisma-accumulator/README.md](../packages/prisma-accumulator/README.md) |
+| sqlalchemy-accumulator | Python | Implemented | [packages/sqlalchemy-accumulator/CONCEPT.md](../packages/sqlalchemy-accumulator/CONCEPT.md) |
+| go-accumulator | Go | Planned | [packages/go-accumulator/CONCEPT.md](../packages/go-accumulator/CONCEPT.md) |
 
 ---
 

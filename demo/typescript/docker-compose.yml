@@ -29,7 +29,7 @@ services:
       dockerfile: Dockerfile
     container_name: pg_accumulator_ts_app
     ports:
-      - "3001:3000"
+      - "3302:3000"
     environment:
       DATABASE_URL: "postgresql://dev:dev_password@postgres:5432/accumulator_dev"
       PORT: "3000"
