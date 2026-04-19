@@ -5,7 +5,7 @@
 --         ORPHAN/MISSING detection, protection triggers on all derived tables.
 
 BEGIN;
-SELECT plan(42);
+SELECT plan(36);
 
 -- ============================================================
 -- Setup: balance register with multi-month, multi-dimension data

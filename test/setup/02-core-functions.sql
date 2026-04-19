@@ -662,6 +662,9 @@ BEGIN
         PERFORM accum._generate_hash_function(name, dimensions);
         PERFORM accum._generate_triggers(name, kind, dimensions, resources, high_write);
 
+        -- Create initial partitions for the movements table
+        PERFORM accum._create_initial_partitions(name, partition_by, 3);
+
         -- Generate per-register read functions (balance, turnover, movements)
         -- Only available when extension is loaded (not in pure emulation mode)
         BEGIN
@@ -732,6 +735,7 @@ DECLARE
     reg           record;
     result        jsonb;
     movements_cnt bigint := 0;
+    partitions    jsonb  := '[]'::jsonb;
     tables_info   jsonb;
 BEGIN
     SELECT * INTO reg FROM accum._registers r WHERE r.name = p_name;
@@ -746,6 +750,28 @@ BEGIN
     EXCEPTION WHEN undefined_table THEN
         movements_cnt := 0;
     END;
+
+    -- Partition info
+    BEGIN
+        SELECT jsonb_agg(jsonb_build_object(
+            'name', child.relname,
+            'range', pg_get_expr(c.relpartbound, c.oid)
+        ) ORDER BY child.relname)
+        INTO partitions
+        FROM pg_inherits i
+        JOIN pg_class parent ON i.inhparent = parent.oid
+        JOIN pg_class child  ON i.inhrelid  = child.oid
+        JOIN pg_catalog.pg_class c ON c.oid = child.oid
+        JOIN pg_namespace ns ON parent.relnamespace = ns.oid
+        WHERE parent.relname = p_name || '_movements'
+          AND ns.nspname = 'accum';
+    EXCEPTION WHEN OTHERS THEN
+        partitions := '[]'::jsonb;
+    END;
+
+    IF partitions IS NULL THEN
+        partitions := '[]'::jsonb;
+    END IF;
 
     -- Tables info
     tables_info := jsonb_build_object(
@@ -776,7 +802,8 @@ BEGIN
         'recorder_type',   reg.recorder_type,
         'created_at',      reg.created_at,
         'movements_count', movements_cnt,
-        'tables',          tables_info
+        'tables',          tables_info,
+        'partitions',      partitions
     );
 
     RETURN result;
@@ -838,6 +865,9 @@ BEGIN
         IF mov->>'period' IS NULL THEN
             RAISE EXCEPTION 'period is required';
         END IF;
+
+        -- Ensure partition exists for this movement's period
+        PERFORM accum._ensure_partition(p_register, (mov->>'period')::timestamptz);
 
         tuple := format('%L, %L::timestamptz', mov->>'recorder', mov->>'period');
 
