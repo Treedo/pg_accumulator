@@ -10,3 +10,12 @@
 /sql/pg_accumulator--*.sql
 !sql/pg_accumulator--*.sql.in
 /tmp_check/
+
+# sqlalchemy-accumulator package artifacts
+/packages/sqlalchemy-accumulator/.venv/
+/packages/sqlalchemy-accumulator/__pycache__/
+/packages/sqlalchemy-accumulator/**/*.py[cod]
+/packages/sqlalchemy-accumulator/.pytest_cache/
+/packages/sqlalchemy-accumulator/*.egg-info/
+/packages/sqlalchemy-accumulator/build/
+/packages/sqlalchemy-accumulator/dist/

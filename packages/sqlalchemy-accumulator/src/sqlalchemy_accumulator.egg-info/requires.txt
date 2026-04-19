@@ -1,0 +1,14 @@
+sqlalchemy>=2.0
+
+[alembic]
+alembic>=1.13
+
+[async]
+asyncpg>=0.29
+
+[dev]
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-mock>=3.12
+mypy>=1.8
+ruff>=0.3

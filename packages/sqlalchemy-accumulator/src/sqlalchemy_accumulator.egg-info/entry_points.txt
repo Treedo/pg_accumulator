@@ -1,0 +1,2 @@
+[console_scripts]
+sqlalchemy-accumulator = sqlalchemy_accumulator.cli:main

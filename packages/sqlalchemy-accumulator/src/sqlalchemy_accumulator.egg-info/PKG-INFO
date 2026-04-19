@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: sqlalchemy-accumulator
+Version: 0.1.0
+Summary: SQLAlchemy adapter for pg_accumulator — type-safe accumulation registers
+License-Expression: MIT
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: sqlalchemy>=2.0
+Provides-Extra: async
+Requires-Dist: asyncpg>=0.29; extra == "async"
+Provides-Extra: alembic
+Requires-Dist: alembic>=1.13; extra == "alembic"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: pytest-mock>=3.12; extra == "dev"
+Requires-Dist: mypy>=1.8; extra == "dev"
+Requires-Dist: ruff>=0.3; extra == "dev"
