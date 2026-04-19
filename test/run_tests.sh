@@ -29,11 +29,11 @@ if [[ "${1:-}" == "--local" ]]; then
         exit 1
     }
     
-    # Run setup scripts
-    echo "--- Running setup scripts ---"
-    for f in "$SCRIPT_DIR"/setup/*.sql; do
-        [ -f "$f" ] && psql -f "$f"
-    done
+    # Install the extension
+    psql -c "CREATE EXTENSION IF NOT EXISTS pg_accumulator;" 2>/dev/null || {
+        echo "pg_accumulator not installed. Build and install with: make && make install"
+        exit 1
+    }
     
     # Run tests
     echo "--- Running pgTAP tests ---"
