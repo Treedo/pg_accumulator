@@ -87,7 +87,17 @@ $$;
 CREATE OR REPLACE FUNCTION @extschema@._drop_hash_function(p_name text)
 RETURNS void
 LANGUAGE plpgsql AS $$
+DECLARE
+    r record;
 BEGIN
-    EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE', '_hash_' || p_name);
+    FOR r IN
+        SELECT p.oid::regprocedure::text AS fn
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'accum'
+          AND p.proname = '_hash_' || p_name
+    LOOP
+        EXECUTE format('DROP FUNCTION %s CASCADE', r.fn);
+    END LOOP;
 END;
 $$;
