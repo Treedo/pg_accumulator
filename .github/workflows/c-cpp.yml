@@ -71,6 +71,24 @@ jobs:
             fi
           fi
 
+          # Ensure llvm-lto (used by thinlto) is available at the expected path
+          if ! [ -x /usr/lib/llvm-19/bin/llvm-lto ]; then
+            echo "Attempting to install LLVM 19 tools (provides llvm-lto)..."
+            sudo apt-get install -y --no-install-recommends llvm-19 llvm-19-tools llvm-19-dev || true
+
+            llvm_lto="$(command -v llvm-lto || command -v llvm-lto-19 || ls /usr/lib/llvm-*/bin/llvm-lto 2>/dev/null | head -n1 || true)"
+            if [ -n "$llvm_lto" ]; then
+              echo "Found llvm-lto at: $llvm_lto"
+              sudo mkdir -p /usr/lib/llvm-19/bin
+              sudo ln -sf "$llvm_lto" /usr/lib/llvm-19/bin/llvm-lto
+              ls -l /usr/lib/llvm-19/bin/llvm-lto || true
+            else
+              echo "llvm-lto not found after attempted install; aborting"
+              apt-cache policy llvm-19 llvm-19-tools || true
+              exit 1
+            fi
+          fi
+
       - name: Build extension with PGXS
         run: |
           export PG_CONFIG=$(which pg_config)
