@@ -367,6 +367,31 @@ pg_accumulator_worker_main(Datum main_arg)
 	elog(DEBUG1, "pg_accumulator worker %d: schema ready, entering maintenance loop",
 		 worker_id);
 
+	/* ---- Post-crash recovery check ---- */
+	PG_TRY();
+	{
+		char recovery_sql[256];
+		int  recovered = 0;
+
+		snprintf(recovery_sql, sizeof(recovery_sql),
+				 "SELECT %s._recovery_check()",
+				 pgacc_schema ? pgacc_schema : "accum");
+
+		if (pgacc_execute_sql(recovery_sql, &recovered) && recovered > 0)
+			elog(LOG, "pg_accumulator worker %d: recovery rebuilt %d register(s)",
+				 worker_id, recovered);
+	}
+	PG_CATCH();
+	{
+		EmitErrorReport();
+		FlushErrorState();
+		if (IsTransactionState())
+			AbortCurrentTransaction();
+		elog(WARNING, "pg_accumulator worker %d: recovery check failed, continuing",
+			 worker_id);
+	}
+	PG_END_TRY();
+
 	/* ---- Main maintenance loop ---- */
 	while (!got_sigterm)
 	{

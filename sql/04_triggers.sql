@@ -33,17 +33,21 @@ DECLARE
     res_cols         text := '';
     res_sum_cols     text := '';
     -- UPSERT SET clauses for INSERT triggers
+    res_update_d     text := '';
     res_update_m     text := '';
     res_update_y     text := '';
     res_update_c     text := '';
     -- UPDATE SET clauses for DELETE triggers
+    res_sub_d        text := '';
     res_sub_m        text := '';
     res_sub_y        text := '';
     res_sub_c        text := '';
     -- Assembled SQL statements
+    totals_upsert_d  text;
     totals_upsert_m  text;
     totals_upsert_y  text;
     cache_upsert     text := '';
+    del_totals_d     text;
     del_totals_m     text;
     del_totals_y     text;
     del_cache        text := '';
@@ -73,9 +77,11 @@ BEGIN
         IF NOT first_res THEN
             res_cols     := res_cols     || ', ';
             res_sum_cols := res_sum_cols || ', ';
+            res_update_d := res_update_d || ', ';
             res_update_m := res_update_m || ', ';
             res_update_y := res_update_y || ', ';
             res_update_c := res_update_c || ', ';
+            res_sub_d    := res_sub_d    || ', ';
             res_sub_m    := res_sub_m    || ', ';
             res_sub_y    := res_sub_y    || ', ';
             res_sub_c    := res_sub_c    || ', ';
@@ -83,6 +89,8 @@ BEGIN
         res_cols     := res_cols     || format('%I', res_key);
         res_sum_cols := res_sum_cols || format('SUM(%I) AS %I', res_key, res_key);
         -- UPSERT: add incoming value to existing
+        res_update_d := res_update_d || format('%I = @extschema@.%I.%I + EXCLUDED.%I',
+            res_key, p_name || '_totals_day', res_key, res_key);
         res_update_m := res_update_m || format('%I = @extschema@.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_totals_month', res_key, res_key);
         res_update_y := res_update_y || format('%I = @extschema@.%I.%I + EXCLUDED.%I',
@@ -90,6 +98,7 @@ BEGIN
         res_update_c := res_update_c || format('%I = @extschema@.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_balance_cache', res_key, res_key);
         -- DELETE: subtract aggregated value
+        res_sub_d := res_sub_d || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
         res_sub_m := res_sub_m || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
         res_sub_y := res_sub_y || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
         res_sub_c := res_sub_c || format('%I = c.%I - agg.%I', res_key, res_key, res_key);
@@ -128,6 +137,20 @@ BEGIN
     -- 2. AFTER INSERT trigger (FOR EACH STATEMENT): batch aggregation
     --    Uses REFERENCING NEW TABLE AS new_rows for efficient batch processing
     -- ============================================================
+
+    -- totals_day UPSERT with aggregation
+    totals_upsert_d := format(
+        'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
+         SELECT dim_hash, period::date, %s, %s
+         FROM new_rows
+         GROUP BY dim_hash, period::date, %s
+         ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
+        p_name || '_totals_day',
+        dim_cols, res_cols,
+        dim_cols, res_sum_cols,
+        dim_cols,
+        res_update_d
+    );
 
     -- totals_month UPSERT with aggregation
     totals_upsert_m := format(
@@ -197,7 +220,7 @@ BEGIN
     END IF;
 
     -- Assemble AFTER INSERT trigger body
-    trg_body_insert := totals_upsert_m || '; ' || totals_upsert_y || ';';
+    trg_body_insert := totals_upsert_d || '; ' || totals_upsert_m || '; ' || totals_upsert_y || ';';
     IF cache_upsert != '' THEN
         trg_body_insert := trg_body_insert || ' ' || cache_upsert || ';';
     END IF;
@@ -228,6 +251,14 @@ BEGIN
     -- 3. AFTER DELETE trigger (FOR EACH STATEMENT): batch subtraction
     --    Uses REFERENCING OLD TABLE AS old_rows
     -- ============================================================
+
+    -- Subtract aggregated resources from totals_day
+    del_totals_d := format(
+        'UPDATE @extschema@.%I t SET %s
+         FROM (SELECT dim_hash, period::date AS period, %s
+               FROM old_rows GROUP BY dim_hash, period::date) agg
+         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+        p_name || '_totals_day', res_sub_d, res_sum_cols);
 
     -- Subtract aggregated resources from totals_month
     del_totals_m := format(
@@ -260,11 +291,13 @@ BEGIN
          BEGIN
              %s;
              %s;
+             %s;
              %s
              RETURN NULL;
          END;
          $trg$',
         '_trg_' || p_name || '_after_delete',
+        del_totals_d,
         del_totals_m,
         del_totals_y,
         CASE WHEN del_cache != '' THEN del_cache || ';' ELSE '' END
@@ -279,5 +312,94 @@ BEGIN
         p_name || '_movements',
         '_trg_' || p_name || '_after_delete'
     );
+
+    -- ============================================================
+    -- 4. Protection triggers: prevent direct UPDATE on movements
+    --    and direct modification of derived tables outside trigger context
+    -- ============================================================
+
+    -- Block UPDATE on movements (must use register_repost)
+    EXECUTE format(
+        'CREATE OR REPLACE FUNCTION @extschema@.%I() RETURNS trigger
+         LANGUAGE plpgsql AS $trg$
+         BEGIN
+             IF current_setting(''pg_accumulator.allow_internal'', true) = ''on'' THEN
+                 RETURN NEW;
+             END IF;
+             RAISE EXCEPTION ''Direct UPDATE on movements is not allowed. Use register_repost() instead.'';
+         END;
+         $trg$',
+        '_trg_' || p_name || '_block_update'
+    );
+
+    EXECUTE format(
+        'CREATE TRIGGER trg_%s_block_update
+         BEFORE UPDATE ON @extschema@.%I
+         FOR EACH ROW EXECUTE FUNCTION @extschema@.%I()',
+        p_name,
+        p_name || '_movements',
+        '_trg_' || p_name || '_block_update'
+    );
+
+    -- Block direct modification of derived tables (totals + cache)
+    -- pg_trigger_depth() > 0 means we are inside a trigger chain (legitimate)
+    -- pg_accumulator.allow_internal = 'on' means maintenance function is running
+    EXECUTE format(
+        'CREATE OR REPLACE FUNCTION @extschema@.%I() RETURNS trigger
+         LANGUAGE plpgsql AS $trg$
+         BEGIN
+             IF pg_trigger_depth() > 1 THEN
+                 RETURN COALESCE(NEW, OLD);
+             END IF;
+             IF current_setting(''pg_accumulator.allow_internal'', true) = ''on'' THEN
+                 RETURN COALESCE(NEW, OLD);
+             END IF;
+             RAISE EXCEPTION ''Direct modification of derived table is not allowed. Use register_rebuild_totals() / register_rebuild_cache() for corrections.'';
+         END;
+         $trg$',
+        '_trg_' || p_name || '_protect_derived'
+    );
+
+    -- Protect totals_day
+    EXECUTE format(
+        'CREATE TRIGGER trg_%s_protect_totals_day
+         BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.%I
+         FOR EACH ROW EXECUTE FUNCTION @extschema@.%I()',
+        p_name,
+        p_name || '_totals_day',
+        '_trg_' || p_name || '_protect_derived'
+    );
+
+    -- Protect totals_month
+    EXECUTE format(
+        'CREATE TRIGGER trg_%s_protect_totals_month
+         BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.%I
+         FOR EACH ROW EXECUTE FUNCTION @extschema@.%I()',
+        p_name,
+        p_name || '_totals_month',
+        '_trg_' || p_name || '_protect_derived'
+    );
+
+    -- Protect totals_year
+    EXECUTE format(
+        'CREATE TRIGGER trg_%s_protect_totals_year
+         BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.%I
+         FOR EACH ROW EXECUTE FUNCTION @extschema@.%I()',
+        p_name,
+        p_name || '_totals_year',
+        '_trg_' || p_name || '_protect_derived'
+    );
+
+    -- Protect balance_cache (if applicable)
+    IF p_kind = 'balance' THEN
+        EXECUTE format(
+            'CREATE TRIGGER trg_%s_protect_balance_cache
+             BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.%I
+             FOR EACH ROW EXECUTE FUNCTION @extschema@.%I()',
+            p_name,
+            p_name || '_balance_cache',
+            '_trg_' || p_name || '_protect_derived'
+        );
+    END IF;
 END;
 $$;

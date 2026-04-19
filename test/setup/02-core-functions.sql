@@ -100,6 +100,19 @@ BEGIN
             %s,
             PRIMARY KEY (dim_hash, period)
         )',
+        p_name || '_totals_day',
+        col_defs,
+        res_defs
+    );
+
+    EXECUTE format(
+        'CREATE TABLE accum.%I (
+            dim_hash       bigint        NOT NULL,
+            period         date          NOT NULL
+            %s
+            %s,
+            PRIMARY KEY (dim_hash, period)
+        )',
         p_name || '_totals_month',
         col_defs,
         res_defs
@@ -198,6 +211,7 @@ BEGIN
     -- Dimension indexes on totals tables for dimension-based queries
     FOR dim_key IN SELECT key FROM jsonb_each_text(p_dimensions) ORDER BY key
     LOOP
+        EXECUTE format('CREATE INDEX ON accum.%I (%I)', p_name || '_totals_day', dim_key);
         EXECUTE format('CREATE INDEX ON accum.%I (%I)', p_name || '_totals_month', dim_key);
         EXECUTE format('CREATE INDEX ON accum.%I (%I)', p_name || '_totals_year', dim_key);
     END LOOP;
@@ -214,6 +228,7 @@ RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
     EXECUTE format('DROP TABLE IF EXISTS accum.%I CASCADE', p_name || '_movements');
+    EXECUTE format('DROP TABLE IF EXISTS accum.%I CASCADE', p_name || '_totals_day');
     EXECUTE format('DROP TABLE IF EXISTS accum.%I CASCADE', p_name || '_totals_month');
     EXECUTE format('DROP TABLE IF EXISTS accum.%I CASCADE', p_name || '_totals_year');
     EXECUTE format('DROP TABLE IF EXISTS accum.%I CASCADE', p_name || '_balance_cache');
@@ -222,6 +237,8 @@ BEGIN
     EXECUTE format('DROP FUNCTION IF EXISTS accum.%I CASCADE', '_trg_' || p_name || '_before_insert');
     EXECUTE format('DROP FUNCTION IF EXISTS accum.%I CASCADE', '_trg_' || p_name || '_after_insert');
     EXECUTE format('DROP FUNCTION IF EXISTS accum.%I CASCADE', '_trg_' || p_name || '_after_delete');
+    EXECUTE format('DROP FUNCTION IF EXISTS accum.%I CASCADE', '_trg_' || p_name || '_block_update');
+    EXECUTE format('DROP FUNCTION IF EXISTS accum.%I CASCADE', '_trg_' || p_name || '_protect_derived');
 
     PERFORM accum._drop_hash_function(p_name);
 END;
@@ -246,15 +263,19 @@ DECLARE
     dim_cols         text := '';
     res_cols         text := '';
     res_sum_cols     text := '';
+    res_update_d     text := '';
     res_update_m     text := '';
     res_update_y     text := '';
     res_update_c     text := '';
+    res_sub_d        text := '';
     res_sub_m        text := '';
     res_sub_y        text := '';
     res_sub_c        text := '';
+    totals_upsert_d  text;
     totals_upsert_m  text;
     totals_upsert_y  text;
     cache_upsert     text := '';
+    del_totals_d     text;
     del_totals_m     text;
     del_totals_y     text;
     del_cache        text := '';
@@ -280,21 +301,26 @@ BEGIN
         IF NOT first_res THEN
             res_cols     := res_cols     || ', ';
             res_sum_cols := res_sum_cols || ', ';
+            res_update_d := res_update_d || ', ';
             res_update_m := res_update_m || ', ';
             res_update_y := res_update_y || ', ';
             res_update_c := res_update_c || ', ';
+            res_sub_d    := res_sub_d    || ', ';
             res_sub_m    := res_sub_m    || ', ';
             res_sub_y    := res_sub_y    || ', ';
             res_sub_c    := res_sub_c    || ', ';
         END IF;
         res_cols     := res_cols     || format('%I', res_key);
         res_sum_cols := res_sum_cols || format('SUM(%I) AS %I', res_key, res_key);
+        res_update_d := res_update_d || format('%I = accum.%I.%I + EXCLUDED.%I',
+            res_key, p_name || '_totals_day', res_key, res_key);
         res_update_m := res_update_m || format('%I = accum.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_totals_month', res_key, res_key);
         res_update_y := res_update_y || format('%I = accum.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_totals_year', res_key, res_key);
         res_update_c := res_update_c || format('%I = accum.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_balance_cache', res_key, res_key);
+        res_sub_d    := res_sub_d || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
         res_sub_m    := res_sub_m || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
         res_sub_y    := res_sub_y || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
         res_sub_c    := res_sub_c || format('%I = c.%I - agg.%I', res_key, res_key, res_key);
@@ -332,6 +358,19 @@ BEGIN
     -- ============================================================
     -- AFTER INSERT trigger (FOR EACH STATEMENT — batch aggregation)
     -- ============================================================
+    totals_upsert_d := format(
+        'INSERT INTO accum.%I (dim_hash, period, %s, %s)
+         SELECT dim_hash, period::date, %s, %s
+         FROM new_rows
+         GROUP BY dim_hash, period::date, %s
+         ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
+        p_name || '_totals_day',
+        dim_cols, res_cols,
+        dim_cols, res_sum_cols,
+        dim_cols,
+        res_update_d
+    );
+
     totals_upsert_m := format(
         'INSERT INTO accum.%I (dim_hash, period, %s, %s)
          SELECT dim_hash, date_trunc(''month'', period)::date, %s, %s
@@ -377,11 +416,18 @@ BEGIN
                 p_name || '_balance_cache'
             );
         ELSE
-            -- Delta buffer: insert individual rows (no aggregation)
+            -- High-write: seed balance_cache rows (zeroed resources) then append to delta buffer
             cache_upsert := format(
-                'INSERT INTO accum.%I (dim_hash, %s)
+                'INSERT INTO accum.%I (dim_hash, %s, last_movement_at, last_movement_id, version)
+                 SELECT DISTINCT ON (dim_hash) dim_hash, %s, now(), id, 0
+                 FROM new_rows
+                 ON CONFLICT (dim_hash) DO NOTHING;
+                 INSERT INTO accum.%I (dim_hash, %s)
                  SELECT dim_hash, %s
                  FROM new_rows',
+                p_name || '_balance_cache',
+                dim_cols,
+                dim_cols,
                 p_name || '_balance_cache_delta',
                 res_cols,
                 res_cols
@@ -389,7 +435,7 @@ BEGIN
         END IF;
     END IF;
 
-    trg_body_insert := totals_upsert_m || '; ' || totals_upsert_y || ';';
+    trg_body_insert := totals_upsert_d || '; ' || totals_upsert_m || '; ' || totals_upsert_y || ';';
     IF cache_upsert != '' THEN
         trg_body_insert := trg_body_insert || ' ' || cache_upsert || ';';
     END IF;
@@ -417,8 +463,15 @@ BEGIN
     );
 
     -- ============================================================
-    -- AFTER DELETE trigger (FOR EACH STATEMENT — batch aggregation)
+    -- AFTER DELETE trigger (FOR EACH STATEMENT — batch subtraction)
     -- ============================================================
+    del_totals_d := format(
+        'UPDATE accum.%I t SET %s
+         FROM (SELECT dim_hash, period::date AS period, %s
+               FROM old_rows GROUP BY dim_hash, period::date) agg
+         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+        p_name || '_totals_day', res_sub_d, res_sum_cols);
+
     del_totals_m := format(
         'UPDATE accum.%I t SET %s
          FROM (SELECT dim_hash, date_trunc(''month'', period)::date AS period, %s
@@ -447,11 +500,13 @@ BEGIN
          BEGIN
              %s;
              %s;
+             %s;
              %s
              RETURN NULL;
          END;
          $trg$',
         '_trg_' || p_name || '_after_delete',
+        del_totals_d,
         del_totals_m,
         del_totals_y,
         CASE WHEN del_cache != '' THEN del_cache || ';' ELSE '' END
@@ -466,6 +521,88 @@ BEGIN
         p_name || '_movements',
         '_trg_' || p_name || '_after_delete'
     );
+
+    -- ============================================================
+    -- Protection triggers
+    -- ============================================================
+
+    -- Block UPDATE on movements (must use register_repost)
+    EXECUTE format(
+        'CREATE OR REPLACE FUNCTION accum.%I() RETURNS trigger
+         LANGUAGE plpgsql AS $trg$
+         BEGIN
+             IF current_setting(''pg_accumulator.allow_internal'', true) = ''on'' THEN
+                 RETURN NEW;
+             END IF;
+             RAISE EXCEPTION ''Direct UPDATE on movements is not allowed. Use register_repost() instead.'';
+         END;
+         $trg$',
+        '_trg_' || p_name || '_block_update'
+    );
+
+    EXECUTE format(
+        'CREATE TRIGGER trg_%s_block_update
+         BEFORE UPDATE ON accum.%I
+         FOR EACH ROW EXECUTE FUNCTION accum.%I()',
+        p_name,
+        p_name || '_movements',
+        '_trg_' || p_name || '_block_update'
+    );
+
+    -- Block direct modification of derived tables
+    EXECUTE format(
+        'CREATE OR REPLACE FUNCTION accum.%I() RETURNS trigger
+         LANGUAGE plpgsql AS $trg$
+         BEGIN
+             IF pg_trigger_depth() > 1 THEN
+                 RETURN COALESCE(NEW, OLD);
+             END IF;
+             IF current_setting(''pg_accumulator.allow_internal'', true) = ''on'' THEN
+                 RETURN COALESCE(NEW, OLD);
+             END IF;
+             RAISE EXCEPTION ''Direct modification of derived table is not allowed. Use register_rebuild_totals() / register_rebuild_cache() for corrections.'';
+         END;
+         $trg$',
+        '_trg_' || p_name || '_protect_derived'
+    );
+
+    EXECUTE format(
+        'CREATE TRIGGER trg_%s_protect_totals_day
+         BEFORE INSERT OR UPDATE OR DELETE ON accum.%I
+         FOR EACH ROW EXECUTE FUNCTION accum.%I()',
+        p_name,
+        p_name || '_totals_day',
+        '_trg_' || p_name || '_protect_derived'
+    );
+
+    EXECUTE format(
+        'CREATE TRIGGER trg_%s_protect_totals_month
+         BEFORE INSERT OR UPDATE OR DELETE ON accum.%I
+         FOR EACH ROW EXECUTE FUNCTION accum.%I()',
+        p_name,
+        p_name || '_totals_month',
+        '_trg_' || p_name || '_protect_derived'
+    );
+
+    EXECUTE format(
+        'CREATE TRIGGER trg_%s_protect_totals_year
+         BEFORE INSERT OR UPDATE OR DELETE ON accum.%I
+         FOR EACH ROW EXECUTE FUNCTION accum.%I()',
+        p_name,
+        p_name || '_totals_year',
+        '_trg_' || p_name || '_protect_derived'
+    );
+
+    IF p_kind = 'balance' THEN
+        EXECUTE format(
+            'CREATE TRIGGER trg_%s_protect_balance_cache
+             BEFORE INSERT OR UPDATE OR DELETE ON accum.%I
+             FOR EACH ROW EXECUTE FUNCTION accum.%I()',
+            p_name,
+            p_name || '_balance_cache',
+            '_trg_' || p_name || '_protect_derived'
+        );
+    END IF;
 END;
 $$;
 
@@ -524,6 +661,14 @@ BEGIN
         PERFORM accum._ddl_create_indexes(name, kind, dimensions, high_write);
         PERFORM accum._generate_hash_function(name, dimensions);
         PERFORM accum._generate_triggers(name, kind, dimensions, resources, high_write);
+
+        -- Generate per-register read functions (balance, turnover, movements)
+        -- Only available when extension is loaded (not in pure emulation mode)
+        BEGIN
+            PERFORM accum._generate_read_functions(name, kind, dimensions, resources, high_write);
+        EXCEPTION WHEN undefined_function THEN
+            NULL; -- Skip if read API not loaded
+        END;
     EXCEPTION WHEN OTHERS THEN
         -- Cleanup partially created objects on failure
         PERFORM accum._ddl_drop_infrastructure(name);
@@ -584,24 +729,54 @@ CREATE OR REPLACE FUNCTION accum.register_info(p_name text)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
-    reg record;
-    result jsonb;
+    reg           record;
+    result        jsonb;
+    movements_cnt bigint := 0;
+    tables_info   jsonb;
 BEGIN
     SELECT * INTO reg FROM accum._registers r WHERE r.name = p_name;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Register "%" does not exist', p_name;
     END IF;
 
+    -- Movement count
+    BEGIN
+        EXECUTE format('SELECT count(*) FROM accum.%I',
+            p_name || '_movements') INTO movements_cnt;
+    EXCEPTION WHEN undefined_table THEN
+        movements_cnt := 0;
+    END;
+
+    -- Tables info
+    tables_info := jsonb_build_object(
+        'movements', p_name || '_movements',
+        'totals_day', p_name || '_totals_day',
+        'totals_month', p_name || '_totals_month',
+        'totals_year', p_name || '_totals_year'
+    );
+
+    IF reg.kind = 'balance' THEN
+        tables_info := tables_info || jsonb_build_object(
+            'balance_cache', p_name || '_balance_cache');
+    END IF;
+
+    IF reg.high_write THEN
+        tables_info := tables_info || jsonb_build_object(
+            'balance_cache_delta', p_name || '_balance_cache_delta');
+    END IF;
+
     result := jsonb_build_object(
-        'name',          reg.name,
-        'kind',          reg.kind,
-        'dimensions',    reg.dimensions,
-        'resources',     reg.resources,
-        'totals_period', reg.totals_period,
-        'partition_by',  reg.partition_by,
-        'high_write',    reg.high_write,
-        'recorder_type', reg.recorder_type,
-        'created_at',    reg.created_at
+        'name',            reg.name,
+        'kind',            reg.kind,
+        'dimensions',      reg.dimensions,
+        'resources',       reg.resources,
+        'totals_period',   reg.totals_period,
+        'partition_by',    reg.partition_by,
+        'high_write',      reg.high_write,
+        'recorder_type',   reg.recorder_type,
+        'created_at',      reg.created_at,
+        'movements_count', movements_cnt,
+        'tables',          tables_info
     );
 
     RETURN result;

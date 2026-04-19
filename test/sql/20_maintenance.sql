@@ -2,7 +2,7 @@
 -- Tests for maintenance module: register_verify, register_rebuild_totals, register_rebuild_cache, register_stats
 
 BEGIN;
-SELECT plan(28);
+SELECT plan(35);
 
 -- ============================================================
 -- Setup: create a balance register with data
@@ -58,9 +58,11 @@ SELECT ok(
 -- ============================================================
 -- TEST 5: Introduce MISMATCH in balance_cache → verify detects it
 -- ============================================================
+SET pg_accumulator.allow_internal = 'on';
 UPDATE accum.maint_balance_cache
 SET quantity = quantity + 999
 WHERE dim_hash = (SELECT dim_hash FROM accum.maint_balance_cache LIMIT 1);
+RESET pg_accumulator.allow_internal;
 
 SELECT ok(
     (SELECT count(*) > 0 FROM accum.register_verify('maint')
@@ -69,6 +71,7 @@ SELECT ok(
 );
 
 -- Restore for further tests
+SET pg_accumulator.allow_internal = 'on';
 UPDATE accum.maint_balance_cache bc
 SET quantity = agg.quantity
 FROM (
@@ -77,13 +80,16 @@ FROM (
     GROUP BY dim_hash
 ) agg
 WHERE bc.dim_hash = agg.dim_hash;
+RESET pg_accumulator.allow_internal;
 
 -- ============================================================
 -- TEST 6: Introduce MISMATCH in totals_month → verify detects it
 -- ============================================================
+SET pg_accumulator.allow_internal = 'on';
 UPDATE accum.maint_totals_month
 SET quantity = quantity + 777
 WHERE dim_hash = (SELECT dim_hash FROM accum.maint_totals_month LIMIT 1);
+RESET pg_accumulator.allow_internal;
 
 SELECT ok(
     (SELECT count(*) > 0 FROM accum.register_verify('maint')
@@ -113,7 +119,9 @@ SELECT is(
 -- TEST 9: register_rebuild_cache (full) → cache recalculated
 -- ============================================================
 -- First corrupt cache
+SET pg_accumulator.allow_internal = 'on';
 UPDATE accum.maint_balance_cache SET quantity = 0, amount = 0;
+RESET pg_accumulator.allow_internal;
 
 SELECT ok(
     accum.register_rebuild_cache('maint') > 0,
@@ -138,6 +146,7 @@ DO $$
 DECLARE
     v_hash bigint;
 BEGIN
+    PERFORM set_config('pg_accumulator.allow_internal', 'on', true);
     SELECT dim_hash INTO v_hash FROM accum.maint_balance_cache LIMIT 1;
     UPDATE accum.maint_balance_cache SET quantity = -9999 WHERE dim_hash = v_hash;
 END;
@@ -215,8 +224,10 @@ SELECT is(
 -- TEST 16: verify + rebuild circle: verify MISMATCH → rebuild → verify OK
 -- ============================================================
 -- Corrupt both totals and cache
+SET pg_accumulator.allow_internal = 'on';
 UPDATE accum.maint_balance_cache SET quantity = -1111;
 UPDATE accum.maint_totals_month SET quantity = -2222;
+RESET pg_accumulator.allow_internal;
 
 -- Verify detects issues
 SELECT ok(
@@ -301,6 +312,82 @@ SELECT throws_ok(
     NULL,
     'verify should fail on nonexistent register'
 );
+
+-- ============================================================
+-- TEST 22: verify returns totals_day checks
+-- ============================================================
+SELECT ok(
+    (SELECT count(*) > 0 FROM accum.register_verify('maint') WHERE check_type = 'totals_day'),
+    'verify should include totals_day checks'
+);
+
+-- ============================================================
+-- TEST 23: Introduce MISMATCH in totals_day → verify detects it
+-- ============================================================
+SET pg_accumulator.allow_internal = 'on';
+UPDATE accum.maint_totals_day
+SET quantity = quantity + 555
+WHERE dim_hash = (SELECT dim_hash FROM accum.maint_totals_day LIMIT 1);
+RESET pg_accumulator.allow_internal;
+
+SELECT ok(
+    (SELECT count(*) > 0 FROM accum.register_verify('maint')
+     WHERE check_type = 'totals_day' AND status = 'MISMATCH'),
+    'verify should detect MISMATCH in totals_day'
+);
+
+-- Rebuild to restore consistency
+SELECT accum.register_rebuild_totals('maint');
+
+-- ============================================================
+-- TEST 24: stats includes totals_day_rows
+-- ============================================================
+SELECT ok(
+    accum.register_stats('maint') ? 'totals_day_rows',
+    'stats should contain totals_day_rows'
+);
+
+-- ============================================================
+-- TEST 25: protection trigger blocks direct UPDATE on movements
+-- ============================================================
+SELECT throws_ok(
+    $$UPDATE accum.maint_movements SET quantity = 0 WHERE id = (SELECT id FROM accum.maint_movements LIMIT 1)$$,
+    NULL,
+    'Direct UPDATE on movements is not allowed. Use register_repost() instead.',
+    'Direct UPDATE on movements should be blocked'
+);
+
+-- ============================================================
+-- TEST 26: protection trigger blocks direct INSERT on totals_month
+-- ============================================================
+SELECT throws_ok(
+    $$INSERT INTO accum.maint_totals_month (dim_hash, period, warehouse, product, quantity, amount)
+      VALUES (0, '2026-01-01', 1, 1, 0, 0)$$,
+    NULL,
+    'Direct modification of derived table is not allowed. Use register_rebuild_totals() / register_rebuild_cache() for corrections.',
+    'Direct INSERT on totals_month should be blocked'
+);
+
+-- ============================================================
+-- TEST 27: protection trigger blocks direct INSERT on totals_day
+-- ============================================================
+SELECT throws_ok(
+    $$INSERT INTO accum.maint_totals_day (dim_hash, period, warehouse, product, quantity, amount)
+      VALUES (0, '2026-01-01', 1, 1, 0, 0)$$,
+    NULL,
+    'Direct modification of derived table is not allowed. Use register_rebuild_totals() / register_rebuild_cache() for corrections.',
+    'Direct INSERT on totals_day should be blocked'
+);
+
+-- ============================================================
+-- TEST 28: GUC bypass allows direct modification when set
+-- ============================================================
+SET pg_accumulator.allow_internal = 'on';
+SELECT lives_ok(
+    $$UPDATE accum.maint_balance_cache SET quantity = quantity WHERE dim_hash = (SELECT dim_hash FROM accum.maint_balance_cache LIMIT 1)$$,
+    'Direct UPDATE should be allowed when pg_accumulator.allow_internal = on'
+);
+RESET pg_accumulator.allow_internal;
 
 -- ============================================================
 -- Cleanup

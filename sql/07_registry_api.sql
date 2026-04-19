@@ -121,6 +121,8 @@ BEGIN
                 p_name || '_movements', dim_key, dim_type);
             -- Add column to totals tables
             EXECUTE format('ALTER TABLE @extschema@.%I ADD COLUMN %I %s',
+                p_name || '_totals_day', dim_key, dim_type);
+            EXECUTE format('ALTER TABLE @extschema@.%I ADD COLUMN %I %s',
                 p_name || '_totals_month', dim_key, dim_type);
             EXECUTE format('ALTER TABLE @extschema@.%I ADD COLUMN %I %s',
                 p_name || '_totals_year', dim_key, dim_type);
@@ -147,6 +149,8 @@ BEGIN
 
             EXECUTE format('ALTER TABLE @extschema@.%I ADD COLUMN %I %s NOT NULL DEFAULT 0',
                 p_name || '_movements', res_key, res_type);
+            EXECUTE format('ALTER TABLE @extschema@.%I ADD COLUMN %I %s NOT NULL DEFAULT 0',
+                p_name || '_totals_day', res_key, res_type);
             EXECUTE format('ALTER TABLE @extschema@.%I ADD COLUMN %I %s NOT NULL DEFAULT 0',
                 p_name || '_totals_month', res_key, res_type);
             EXECUTE format('ALTER TABLE @extschema@.%I ADD COLUMN %I %s NOT NULL DEFAULT 0',
@@ -195,6 +199,9 @@ BEGIN
                 first_d := false;
             END LOOP;
 
+            -- Bypass protection trigger for internal update
+            PERFORM set_config('pg_accumulator.allow_internal', 'on', true);
+
             EXECUTE format('UPDATE @extschema@.%I SET dim_hash = @extschema@.%I(%s)',
                 p_name || '_movements',
                 '_hash_' || p_name,
@@ -203,6 +210,7 @@ BEGIN
         END;
 
         -- Rebuild totals and cache from scratch
+        EXECUTE format('TRUNCATE @extschema@.%I', p_name || '_totals_day');
         EXECUTE format('TRUNCATE @extschema@.%I', p_name || '_totals_month');
         EXECUTE format('TRUNCATE @extschema@.%I', p_name || '_totals_year');
         IF reg.kind = 'balance' THEN
@@ -222,12 +230,28 @@ BEGIN
             p_name, p_name || '_movements');
         EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_after_delete ON @extschema@.%I',
             p_name, p_name || '_movements');
+        EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_block_update ON @extschema@.%I',
+            p_name, p_name || '_movements');
+        EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_protect_totals_day ON @extschema@.%I',
+            p_name, p_name || '_totals_day');
+        EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_protect_totals_month ON @extschema@.%I',
+            p_name, p_name || '_totals_month');
+        EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_protect_totals_year ON @extschema@.%I',
+            p_name, p_name || '_totals_year');
+        IF reg.kind = 'balance' THEN
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_protect_balance_cache ON @extschema@.%I',
+                p_name, p_name || '_balance_cache');
+        END IF;
         EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
             '_trg_' || p_name || '_before_insert');
         EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
             '_trg_' || p_name || '_after_insert');
         EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
             '_trg_' || p_name || '_after_delete');
+        EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+            '_trg_' || p_name || '_block_update');
+        EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE',
+            '_trg_' || p_name || '_protect_derived');
 
         PERFORM @extschema@._generate_triggers(
             p_name, reg.kind, new_dimensions, new_resources,
@@ -288,6 +312,22 @@ BEGIN
         first_res := false;
     END LOOP;
 
+    -- Bypass protection triggers
+    PERFORM set_config('pg_accumulator.allow_internal', 'on', true);
+
+    -- Rebuild totals_day
+    EXECUTE format(
+        'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
+         SELECT dim_hash, period::date, %s, %s
+         FROM @extschema@.%I
+         GROUP BY dim_hash, period::date, %s',
+        p_name || '_totals_day',
+        dim_cols, res_cols,
+        dim_cols, res_sum_cols,
+        p_name || '_movements',
+        dim_cols
+    );
+
     -- Rebuild totals_month
     EXECUTE format(
         'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
@@ -297,7 +337,7 @@ BEGIN
         p_name || '_totals_month',
         dim_cols, res_cols,
         dim_cols, res_sum_cols,
-        p_name || '_movements',
+        p_name || '_totals_day',
         dim_cols
     );
 
@@ -310,7 +350,7 @@ BEGIN
         p_name || '_totals_year',
         dim_cols, res_cols,
         dim_cols, res_sum_cols,
-        p_name || '_movements',
+        p_name || '_totals_month',
         dim_cols
     );
 
@@ -328,6 +368,9 @@ BEGIN
             dim_cols
         );
     END IF;
+
+    -- Reset protection bypass
+    PERFORM set_config('pg_accumulator.allow_internal', '', true);
 END;
 $$;
 
@@ -452,6 +495,7 @@ BEGIN
     -- Tables info
     tables_info := jsonb_build_object(
         'movements', p_name || '_movements',
+        'totals_day', p_name || '_totals_day',
         'totals_month', p_name || '_totals_month',
         'totals_year', p_name || '_totals_year'
     );
