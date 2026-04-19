@@ -3,7 +3,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/Dockerfile
-    container_name: pg_accumulator_demo_db
+    container_name: pg_accumulator_demo_py_db
     ports:
       - "5434:5432"
     environment:
@@ -27,7 +27,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: pg_accumulator_demo_app
+    container_name: pg_accumulator_demo_py_app
     ports:
       - "5001:5000"
     environment:
