@@ -17,16 +17,27 @@ jobs:
         run: |
           sudo apt-get update
           # Find available postgresql-server-dev-N packages and install the highest version available
-          available_versions=$(apt-cache pkgnames 'postgresql-server-dev-*' | grep -E '^postgresql-server-dev-[0-9]+$' | sed -E 's/^postgresql-server-dev-([0-9]+)$/\1/')
+          available_versions=$(apt-cache pkgnames 'postgresql-server-dev-*' \
+            | grep -E '^postgresql-server-dev-[0-9]+$' \
+            | sed -E 's/^postgresql-server-dev-([0-9]+)$/\1/' \
+            | sort -nr)
+          
           if [ -n "$available_versions" ]; then
-            chosen=$(echo "$available_versions" | sort -nr | head -n1)
+            chosen=$(echo "$available_versions" | head -n1)
             echo "Installing postgresql-server-dev-$chosen"
             sudo apt-get install -y build-essential postgresql-server-dev-"$chosen"
           else
-            # fallback when no specific dev package found: install libpq headers
-            echo "No postgresql-server-dev-N packages found; installing libpq-dev as a fallback"
-            sudo apt-get install -y build-essential libpq-dev
+            # Fallback: install the "all" dev package which provides server headers for available versions
+            echo "No numbered postgresql-server-dev packages found; installing postgresql-server-dev-all"
+            sudo apt-get install -y build-essential postgresql-server-dev-all
           fi
+          
+          # Verify pg_config is available
+          if ! command -v pg_config >/dev/null 2>&1; then
+            echo "pg_config not found after installing dev packages — aborting"
+            exit 1
+          fi
+          pg_config --version
 
       - name: Build extension with PGXS
         run: |
@@ -36,12 +47,12 @@ jobs:
           echo "Installed PostgreSQL packages:"
           dpkg -l 'postgresql-*' postgresql-common || true
           make clean
-          make USE_PGXS=1
+          make USE_PGXS=1 PG_CONFIG="$PG_CONFIG"
 
       - name: Stage extension install
         run: |
           export PG_CONFIG=$(which pg_config)
-          make install USE_PGXS=1 DESTDIR="$GITHUB_WORKSPACE/install"
+          make install USE_PGXS=1 PG_CONFIG="$PG_CONFIG" DESTDIR="$GITHUB_WORKSPACE/install"
 
   test:
     runs-on: ubuntu-latest
