@@ -69,12 +69,12 @@ jobs:
           echo "Installed PostgreSQL packages:"
           dpkg -l 'postgresql-*' postgresql-common || true
           make clean
-          make USE_PGXS=1 PG_CONFIG="$PG_CONFIG"
+          make USE_PGXS=1 PG_CONFIG="$PG_CONFIG" CC=gcc
 
       - name: Stage extension install
         run: |
           export PG_CONFIG=$(which pg_config)
-          make install USE_PGXS=1 PG_CONFIG="$PG_CONFIG" DESTDIR="$GITHUB_WORKSPACE/install"
+          make install USE_PGXS=1 PG_CONFIG="$PG_CONFIG" DESTDIR="$GITHUB_WORKSPACE/install" CC=gcc
 
   test:
     runs-on: ubuntu-latest
