@@ -16,25 +16,47 @@ jobs:
       - name: Install PostgreSQL build dependencies
         run: |
           sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates wget gnupg lsb-release
+
           # Find available postgresql-server-dev-N packages and install the highest version available
           available_versions=$(apt-cache pkgnames 'postgresql-server-dev-*' \
             | grep -E '^postgresql-server-dev-[0-9]+$' \
             | sed -E 's/^postgresql-server-dev-([0-9]+)$/\1/' \
             | sort -nr)
-          
+
           if [ -n "$available_versions" ]; then
             chosen=$(echo "$available_versions" | head -n1)
             echo "Installing postgresql-server-dev-$chosen"
-            sudo apt-get install -y build-essential postgresql-server-dev-"$chosen"
+            sudo apt-get install -y --no-install-recommends postgresql-server-dev-"$chosen"
           else
-            # Fallback: install the "all" dev package which provides server headers for available versions
-            echo "No numbered postgresql-server-dev packages found; installing postgresql-server-dev-all"
-            sudo apt-get install -y build-essential postgresql-server-dev-all
+            echo "No numbered postgresql-server-dev packages found in default repos"
+            for v in 16 15 14 13 12; do
+              if apt-cache show postgresql-server-dev-$v >/dev/null 2>&1; then
+                echo "Found postgresql-server-dev-$v in apt; installing"
+                sudo apt-get install -y --no-install-recommends postgresql-server-dev-$v
+                break
+              fi
+            done
           fi
-          
-          # Verify pg_config is available
+
+          if ! command -v pg_config >/dev/null 2>&1; then
+            echo "No suitable postgresql-server-dev package found in default repos — adding PGDG repository"
+            wget -qO - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /etc/apt/trusted.gpg.d/pgdg.asc >/dev/null
+            echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+            sudo apt-get update
+
+            for v in 16 15 14 13 12; do
+              if apt-cache show postgresql-server-dev-$v >/dev/null 2>&1; then
+                echo "Installing postgresql-server-dev-$v from PGDG"
+                sudo apt-get install -y --no-install-recommends postgresql-server-dev-$v
+                break
+              fi
+            done
+          fi
+
           if ! command -v pg_config >/dev/null 2>&1; then
             echo "pg_config not found after installing dev packages — aborting"
+            apt-cache policy postgresql-common postgresql-server-dev-* || true
             exit 1
           fi
           pg_config --version
