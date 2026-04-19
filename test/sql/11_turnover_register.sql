@@ -8,7 +8,7 @@ SELECT plan(11);
 -- Setup: create turnover register for sales
 -- ============================================================
 SELECT accum.register_create(
-    name       := 'sales',
+    name       := 'sales_x',
     dimensions := '{"product": "int", "region": "text"}',
     resources  := '{"sold_qty": "numeric", "revenue": "numeric(18,2)"}',
     kind       := 'turnover'
@@ -17,16 +17,16 @@ SELECT accum.register_create(
 -- ============================================================
 -- TEST: Infrastructure created correctly
 -- ============================================================
-SELECT has_table('accum', 'sales_movements', 'Movements table should exist');
-SELECT has_table('accum', 'sales_totals_month', 'Totals month should exist');
-SELECT has_table('accum', 'sales_totals_year', 'Totals year should exist');
-SELECT hasnt_table('accum', 'sales_balance_cache', 'Balance cache should NOT exist');
+SELECT has_table('accum', 'sales_x_movements', 'Movements table should exist');
+SELECT has_table('accum', 'sales_x_totals_month', 'Totals month should exist');
+SELECT has_table('accum', 'sales_x_totals_year', 'Totals year should exist');
+SELECT hasnt_table('accum', 'sales_x_balance_cache', 'Balance cache should NOT exist');
 
 -- ============================================================
 -- TEST: Post turnover movements
 -- ============================================================
 SELECT is(
-    accum.register_post('sales', '[
+    accum.register_post('sales_x', '[
         {"recorder":"sale:1","period":"2026-04-10","product":1,"region":"north","sold_qty":10,"revenue":500},
         {"recorder":"sale:2","period":"2026-04-15","product":1,"region":"north","sold_qty":20,"revenue":1000},
         {"recorder":"sale:3","period":"2026-04-15","product":2,"region":"south","sold_qty":5,"revenue":250}
@@ -39,14 +39,14 @@ SELECT is(
 -- TEST: Totals month aggregated
 -- ============================================================
 SELECT is(
-    (SELECT sold_qty FROM accum.sales_totals_month
+    (SELECT sold_qty FROM accum.sales_x_totals_month
      WHERE product=1 AND region='north' AND period='2026-04-01'::date),
     30::numeric,
     'April north product 1 turnover should be 10+20=30'
 );
 
 SELECT is(
-    (SELECT revenue FROM accum.sales_totals_month
+    (SELECT revenue FROM accum.sales_x_totals_month
      WHERE product=1 AND region='north' AND period='2026-04-01'::date),
     1500::numeric,
     'April north product 1 revenue should be 500+1000=1500'
@@ -56,7 +56,7 @@ SELECT is(
 -- TEST: Different dim_hash for different productxregion
 -- ============================================================
 SELECT is(
-    (SELECT count(*)::int FROM accum.sales_totals_month),
+    (SELECT count(*)::int FROM accum.sales_x_totals_month),
     2,
     'Should have 2 totals_month rows (2 unique dim combos)'
 );
@@ -64,10 +64,10 @@ SELECT is(
 -- ============================================================
 -- TEST: Unpost works for turnover
 -- ============================================================
-SELECT accum.register_unpost('sales', 'sale:2');
+SELECT accum.register_unpost('sales_x', 'sale:2');
 
 SELECT is(
-    (SELECT sold_qty FROM accum.sales_totals_month
+    (SELECT sold_qty FROM accum.sales_x_totals_month
      WHERE product=1 AND region='north' AND period='2026-04-01'::date),
     10::numeric,
     'After unpost sale:2, turnover should be 10'
@@ -77,7 +77,7 @@ SELECT is(
 -- TEST: Movements count after unpost
 -- ============================================================
 SELECT is(
-    (SELECT count(*)::int FROM accum.sales_movements),
+    (SELECT count(*)::int FROM accum.sales_x_movements),
     2,
     'Should have 2 movements after unpost'
 );
@@ -86,14 +86,14 @@ SELECT is(
 -- TEST: Year totals correct
 -- ============================================================
 SELECT is(
-    (SELECT sold_qty FROM accum.sales_totals_year
+    (SELECT sold_qty FROM accum.sales_x_totals_year
      WHERE product=1 AND region='north' AND period='2026-01-01'::date),
     10::numeric,
     'Year totals should reflect unpost'
 );
 
 -- Cleanup
-SELECT accum.register_drop('sales', force := true);
+SELECT accum.register_drop('sales_x', force := true);
 
 SELECT * FROM finish();
 ROLLBACK;

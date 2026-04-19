@@ -41,8 +41,11 @@ if [[ "${1:-}" == "--local" ]]; then
 else
     echo "=== Running tests in Docker ==="
     cd "$PROJECT_DIR"
+    # Clean up any leftover containers/volumes from previous (possibly interrupted) runs
+    docker compose -f docker/docker-compose.test.yml down -v 2>/dev/null || true
     docker compose -f docker/docker-compose.test.yml up \
         --build \
+        --force-recreate \
         --abort-on-container-exit \
         --exit-code-from test-runner
     

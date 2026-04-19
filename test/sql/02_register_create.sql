@@ -155,7 +155,7 @@ SELECT throws_ok(
 -- ============================================================
 SELECT lives_ok(
     $$SELECT accum.register_create(
-        name       := 'sales',
+        name       := 'sales_x',
         dimensions := '{"product": "int"}',
         resources  := '{"sold": "numeric"}',
         kind       := 'turnover'
@@ -163,17 +163,17 @@ SELECT lives_ok(
     'Turnover register should be created'
 );
 
-SELECT hasnt_table('accum', 'sales_balance_cache',
+SELECT hasnt_table('accum', 'sales_x_balance_cache',
     'Turnover register should NOT have balance_cache');
 
-SELECT has_table('accum', 'sales_movements', 'Turnover should have movements');
-SELECT has_table('accum', 'sales_totals_month', 'Turnover should have totals_month');
+SELECT has_table('accum', 'sales_x_movements', 'Turnover should have movements');
+SELECT has_table('accum', 'sales_x_totals_month', 'Turnover should have totals_month');
 
 -- ============================================================
 -- Cleanup
 -- ============================================================
 SELECT accum.register_drop('inventory', force := true);
-SELECT accum.register_drop('sales', force := true);
+SELECT accum.register_drop('sales_x', force := true);
 
 SELECT * FROM finish();
 ROLLBACK;

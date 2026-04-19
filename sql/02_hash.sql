@@ -10,13 +10,13 @@ LANGUAGE sql IMMUTABLE AS $$
   SELECT ('x' || substr(md5(coalesce(val, '')), 1, 16))::bit(64)::bigint;
 $$;
 
-CREATE OR REPLACE FUNCTION @extschema@._hash_sales(product integer, region text)
+CREATE OR REPLACE FUNCTION @extschema@._hash_legacy_sales(product integer, region text)
 RETURNS bigint
 LANGUAGE sql IMMUTABLE AS $$
   SELECT @extschema@._md5_to_bigint(coalesce($1::text, '') || '|' || coalesce($2, ''));
 $$;
 
-CREATE OR REPLACE FUNCTION @extschema@._hash_multi_dim(a text, b integer, c text, d integer)
+CREATE OR REPLACE FUNCTION @extschema@._hash_legacy_multi_dim(a text, b integer, c text, d integer)
 RETURNS bigint
 LANGUAGE sql IMMUTABLE AS $$
   SELECT @extschema@._md5_to_bigint(
@@ -24,7 +24,7 @@ LANGUAGE sql IMMUTABLE AS $$
   );
 $$;
 
-CREATE OR REPLACE FUNCTION @extschema@._hash_alter_test(a text, b integer, c integer)
+CREATE OR REPLACE FUNCTION @extschema@._hash_legacy_alter_test(a text, b integer, c integer)
 RETURNS bigint
 LANGUAGE sql IMMUTABLE AS $$
   SELECT @extschema@._md5_to_bigint(
@@ -57,7 +57,7 @@ BEGIN
     PERFORM @extschema@._validate_dimensions(p_dimensions);
 
     -- Build function signature and body
-    FOR dim_key, dim_type IN SELECT * FROM jsonb_each_text(p_dimensions)
+    FOR dim_key, dim_type IN SELECT * FROM jsonb_each_text(p_dimensions) ORDER BY key
     LOOP
         IF arg_idx > 0 THEN
             hash_args := hash_args || ', ';
@@ -91,14 +91,23 @@ DECLARE
     r record;
 BEGIN
     FOR r IN
-        SELECT p.oid::regprocedure::text AS fn
+        SELECT p.oid::regprocedure::text AS fn,
+               e.extname
         FROM pg_proc p
         JOIN pg_namespace n ON p.pronamespace = n.oid
+        LEFT JOIN pg_depend d ON d.objid = p.oid
+                           AND d.classid = 'pg_proc'::regclass
+                           AND d.deptype = 'e'
+        LEFT JOIN pg_extension e ON d.refobjid = e.oid
         WHERE n.nspname = 'accum'
           AND p.proname = '_hash_' || p_name
     LOOP
         BEGIN
-            EXECUTE format('DROP FUNCTION %s CASCADE', r.fn);
+            IF r.extname IS NOT NULL THEN
+                RAISE NOTICE 'Skipping drop of extension-owned hash function % (extension %)', r.fn, r.extname;
+            ELSE
+                EXECUTE format('DROP FUNCTION %s CASCADE', r.fn);
+            END IF;
         EXCEPTION WHEN OTHERS THEN
             RAISE NOTICE 'Skipping drop of hash function %: %', r.fn, SQLERRM;
         END;

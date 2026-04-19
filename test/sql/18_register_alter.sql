@@ -8,14 +8,14 @@ SELECT plan(28);
 -- Setup: create a balance register with data
 -- ============================================================
 SELECT accum.register_create(
-    name       := 'alter_test',
+    name       := 'alter_test_x',
     dimensions := '{"warehouse": "int", "product": "int"}',
     resources  := '{"quantity": "numeric(18,4)"}',
     kind       := 'balance'
 );
 
 -- Post some initial data
-SELECT accum.register_post('alter_test', '[
+SELECT accum.register_post('alter_test_x', '[
     {"recorder":"doc:1","period":"2026-04-01","warehouse":1,"product":100,"quantity":50},
     {"recorder":"doc:2","period":"2026-04-02","warehouse":1,"product":101,"quantity":30},
     {"recorder":"doc:3","period":"2026-04-03","warehouse":2,"product":100,"quantity":20}
@@ -26,32 +26,32 @@ SELECT accum.register_post('alter_test', '[
 -- ============================================================
 SELECT lives_ok(
     $$SELECT accum.register_alter(
-        p_name        := 'alter_test',
+        p_name        := 'alter_test_x',
         add_resources := '{"amount": "numeric(18,2)"}'
     )$$,
     'Adding a resource should succeed'
 );
 
 -- Verify column exists
-SELECT has_column('accum', 'alter_test_movements', 'amount',
+SELECT has_column('accum', 'alter_test_x_movements', 'amount',
     'Movements should have new amount column');
-SELECT has_column('accum', 'alter_test_totals_month', 'amount',
+SELECT has_column('accum', 'alter_test_x_totals_month', 'amount',
     'Totals month should have new amount column');
-SELECT has_column('accum', 'alter_test_totals_year', 'amount',
+SELECT has_column('accum', 'alter_test_x_totals_year', 'amount',
     'Totals year should have new amount column');
-SELECT has_column('accum', 'alter_test_balance_cache', 'amount',
+SELECT has_column('accum', 'alter_test_x_balance_cache', 'amount',
     'Balance cache should have new amount column');
 
 -- Verify metadata updated
 SELECT is(
-    (SELECT accum.register_info('alter_test')->'resources'->>'amount'),
+    (SELECT accum.register_info('alter_test_x')->'resources'->>'amount'),
     'numeric(18,2)',
     'Metadata should contain new resource amount'
 );
 
 -- Verify existing data still intact
 SELECT is(
-    (SELECT count(*)::int FROM accum.alter_test_movements),
+    (SELECT count(*)::int FROM accum.alter_test_x_movements),
     3,
     'Movements should still have 3 rows after add_resources'
 );
@@ -60,7 +60,7 @@ SELECT is(
 -- TEST: Post data with new resource
 -- ============================================================
 SELECT lives_ok(
-    $$SELECT accum.register_post('alter_test', '{
+    $$SELECT accum.register_post('alter_test_x', '{
         "recorder":"doc:4","period":"2026-04-04",
         "warehouse":1,"product":100,"quantity":10,"amount":99.99
     }')$$,
@@ -68,7 +68,7 @@ SELECT lives_ok(
 );
 
 SELECT is(
-    (SELECT count(*)::int FROM accum.alter_test_movements),
+    (SELECT count(*)::int FROM accum.alter_test_x_movements),
     4,
     'Should have 4 movements after new post'
 );
@@ -78,37 +78,37 @@ SELECT is(
 -- ============================================================
 SELECT lives_ok(
     $$SELECT accum.register_alter(
-        p_name         := 'alter_test',
+        p_name         := 'alter_test_x',
         add_dimensions := '{"location": "text"}'
     )$$,
     'Adding a dimension should succeed'
 );
 
-SELECT has_column('accum', 'alter_test_movements', 'location',
+SELECT has_column('accum', 'alter_test_x_movements', 'location',
     'Movements should have new location column');
-SELECT has_column('accum', 'alter_test_totals_month', 'location',
+SELECT has_column('accum', 'alter_test_x_totals_month', 'location',
     'Totals month should have new location column');
-SELECT has_column('accum', 'alter_test_balance_cache', 'location',
+SELECT has_column('accum', 'alter_test_x_balance_cache', 'location',
     'Balance cache should have new location column');
 
 -- Verify metadata updated
 SELECT is(
-    (SELECT accum.register_info('alter_test')->'dimensions'->>'location'),
+    (SELECT accum.register_info('alter_test_x')->'dimensions'->>'location'),
     'text',
     'Metadata should contain new dimension location'
 );
 
 -- Verify movements count preserved
 SELECT is(
-    (SELECT count(*)::int FROM accum.alter_test_movements),
+    (SELECT count(*)::int FROM accum.alter_test_x_movements),
     4,
     'Movements should still have 4 rows after add_dimensions'
 );
 
 -- Verify totals were rebuilt
 SELECT is(
-    (SELECT count(*)::int FROM accum.alter_test_totals_month WHERE dim_hash IS NOT NULL),
-    (SELECT count(*)::int FROM accum.alter_test_totals_month),
+    (SELECT count(*)::int FROM accum.alter_test_x_totals_month WHERE dim_hash IS NOT NULL),
+    (SELECT count(*)::int FROM accum.alter_test_x_totals_month),
     'All totals_month rows should have non-null dim_hash after rebuild'
 );
 
@@ -117,7 +117,7 @@ SELECT is(
 -- ============================================================
 SELECT throws_ok(
     $$SELECT accum.register_alter(
-        p_name         := 'alter_test',
+        p_name         := 'alter_test_x',
         add_dimensions := '{"warehouse": "int"}'
     )$$,
     NULL,
@@ -130,7 +130,7 @@ SELECT throws_ok(
 -- ============================================================
 SELECT throws_ok(
     $$SELECT accum.register_alter(
-        p_name        := 'alter_test',
+        p_name        := 'alter_test_x',
         add_resources := '{"quantity": "numeric"}'
     )$$,
     NULL,
@@ -156,17 +156,17 @@ SELECT throws_ok(
 -- ============================================================
 SELECT lives_ok(
     $$SELECT accum.register_alter(
-        p_name     := 'alter_test',
+        p_name     := 'alter_test_x',
         high_write := true
     )$$,
     'Enabling high_write should succeed'
 );
 
-SELECT has_table('accum', 'alter_test_balance_cache_delta',
+SELECT has_table('accum', 'alter_test_x_balance_cache_delta',
     'Delta buffer table should be created');
 
 SELECT is(
-    (SELECT (accum.register_info('alter_test')->>'high_write')::boolean),
+    (SELECT (accum.register_info('alter_test_x')->>'high_write')::boolean),
     true,
     'Metadata should show high_write=true'
 );
@@ -176,17 +176,17 @@ SELECT is(
 -- ============================================================
 SELECT lives_ok(
     $$SELECT accum.register_alter(
-        p_name     := 'alter_test',
+        p_name     := 'alter_test_x',
         high_write := false
     )$$,
     'Disabling high_write should succeed'
 );
 
-SELECT hasnt_table('accum', 'alter_test_balance_cache_delta',
+SELECT hasnt_table('accum', 'alter_test_x_balance_cache_delta',
     'Delta buffer table should be removed');
 
 SELECT is(
-    (SELECT (accum.register_info('alter_test')->>'high_write')::boolean),
+    (SELECT (accum.register_info('alter_test_x')->>'high_write')::boolean),
     false,
     'Metadata should show high_write=false'
 );
@@ -217,7 +217,7 @@ SELECT hasnt_table('accum', 'alter_turnover_balance_cache',
 -- ============================================================
 -- Cleanup
 -- ============================================================
-SELECT accum.register_drop('alter_test', force := true);
+SELECT accum.register_drop('alter_test_x', force := true);
 SELECT accum.register_drop('alter_turnover', force := true);
 
 SELECT * FROM finish();
