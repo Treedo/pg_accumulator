@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,7 +21,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ca-certificates gnupg wget lsb-release
           # Add the PGDG repository key and source list (signed-by modern approach)
-          wget -qO - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/pgdg-archive-keyring.gpg
+          PGDG_KEY_FILE="$(mktemp)"
+          wget -qO "$PGDG_KEY_FILE" https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          PGDG_FPR="$(gpg --with-colons --import-options show-only --import "$PGDG_KEY_FILE" | awk -F: '/^fpr:/ {print $10; exit}')"
+          test "$PGDG_FPR" = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+          sudo gpg --dearmor -o /usr/share/keyrings/pgdg-archive-keyring.gpg "$PGDG_KEY_FILE"
+          rm -f "$PGDG_KEY_FILE"
           echo "deb [signed-by=/usr/share/keyrings/pgdg-archive-keyring.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y postgresql-17 postgresql-server-dev-17 build-essential
