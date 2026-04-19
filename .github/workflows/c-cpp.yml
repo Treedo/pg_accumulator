@@ -79,9 +79,15 @@ jobs:
             llvm_lto="$(command -v llvm-lto || command -v llvm-lto-19 || ls /usr/lib/llvm-*/bin/llvm-lto 2>/dev/null | head -n1 || true)"
             if [ -n "$llvm_lto" ]; then
               echo "Found llvm-lto at: $llvm_lto"
+              target=/usr/lib/llvm-19/bin/llvm-lto
               sudo mkdir -p /usr/lib/llvm-19/bin
-              sudo ln -sf "$llvm_lto" /usr/lib/llvm-19/bin/llvm-lto
-              ls -l /usr/lib/llvm-19/bin/llvm-lto || true
+              if [ ! -e "$target" ] || [ "$(readlink -f "$llvm_lto")" != "$(readlink -f "$target")" ]; then
+                echo "Linking llvm-lto to $target"
+                sudo ln -sf "$llvm_lto" "$target" || true
+              else
+                echo "$target already points to the same file; skipping ln"
+              fi
+              ls -l "$target" || true
             else
               echo "llvm-lto not found after attempted install; aborting"
               apt-cache policy llvm-19 llvm-19-tools || true
