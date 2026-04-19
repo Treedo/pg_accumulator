@@ -1,7 +1,7 @@
 import type { Register, RegisterInfo, RegisterListRow, AlterRegisterOptions } from '../types/register';
 import { mapPgError } from '../errors';
 
-type Executor = { $queryRawUnsafe: (...args: unknown[]) => Promise<unknown[]> };
+type Executor = { $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T> };
 
 /**
  * Create a register in the database.
@@ -122,10 +122,26 @@ export async function listRegisters(
   schema: string,
 ): Promise<RegisterListRow[]> {
   try {
-    const rows = await executor.$queryRawUnsafe(
+    const rows = await executor.$queryRawUnsafe<Array<{
+      name: string;
+      kind: string;
+      dimensions: number;
+      resources: number;
+      movements_count: bigint | number;
+      created_at: string;
+    }>>(
       `SELECT * FROM "${schema}".register_list()`,
     );
-    return rows as RegisterListRow[];
+    return (rows ?? []).map(row => ({
+      name: row.name,
+      kind: row.kind as any,
+      dimensions: row.dimensions,
+      resources: row.resources,
+      movements_count: typeof row.movements_count === 'bigint' 
+        ? Number(row.movements_count) 
+        : row.movements_count,
+      created_at: row.created_at,
+    }));
   } catch (err) {
     mapPgError(err);
   }
