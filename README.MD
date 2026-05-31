@@ -4,8 +4,7 @@
 
 Declarative accumulation registers that provide instant access to balances and turnovers across arbitrary dimensions — with full transactional consistency, retroactive corrections, and zero application-side aggregation logic.
 
-> **Release status:** v1.0.3 — all [22 test suites](test/sql/) passing (pgTAP).
-
+> **Release status:** v1.2.0 — all test/sql/ passing (pgTAP).
 ---
 
 ## Table of Contents
