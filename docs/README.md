@@ -274,6 +274,7 @@ Resources can be positive or negative. A negative value represents a decrease.
 |---|---|---|---|
 | `balance` | Resource balances (inventory, accounts) | ✅ | ✅ |
 | `turnover` | Turnover only (sales, statistics, counters) | ❌ | ✅ |
+| `ledger` | Double-entry financial bookkeeping | ✅ | ✅ |
 
 ```sql
 -- Balance register: "how much is in stock right now"
@@ -281,9 +282,14 @@ SELECT register_create(name := 'stock', kind := 'balance', ...);
 
 -- Turnover register: "how much was sold this month"
 SELECT register_create(name := 'sales', kind := 'turnover', ...);
+
+-- Ledger register: "double-entry accounting ledger with debit/credit balance"
+SELECT register_create(name := 'general_ledger', kind := 'ledger', ...);
 ```
 
-A `balance` register maintains a cumulative `balance_cache` and supports the `_balance()` function. A `turnover` register only maintains period totals.
+A `balance` register maintains a cumulative `balance_cache` and supports the `_balance()` function. A `turnover` register only maintains period totals. A `ledger` register handles balanced double-entry accounting records, splitting debit and credit entries automatically and ensuring total debit equals total credit.
+
+For specific requirements, architecture, and deployment plan for Double-Entry Ledgers, see [docs/ledger_register.md](docs/ledger_register.md) and [docs/ledger_plan.md](docs/ledger_plan.md).
 
 ---
 

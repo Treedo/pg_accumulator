@@ -29,10 +29,10 @@ services:
       dockerfile: demo/prisma/Dockerfile
     container_name: pg_accumulator_prisma_app
     ports:
-      - "3303:3000"
+      - "3303:3303"
     environment:
       DATABASE_URL: "postgresql://dev:dev_password@postgres:5432/accumulator_dev"
-      PORT: "3000"
+      PORT: "3303"
     depends_on:
       postgres:
         condition: service_healthy

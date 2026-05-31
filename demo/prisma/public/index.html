@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>pg_accumulator + Prisma Demo — Склад</title>
+    <title>pg_accumulator + Prisma Demo — Warehouse</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #eef7f2; color: #102a43; padding: 20px; }
@@ -34,27 +34,188 @@
         .tab.active { background: #ffffff; font-weight: 700; box-shadow: 0 -4px 18px rgba(15, 23, 42, 0.08); }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        .acc-active { background: #0f766e; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+        .acc-passive { background: #b45309; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+        .subconto-box { background: #f1f5f9; color: #334e68; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 11px; }
+        .success-box { background: #d1e7dd; color: #0f5132; padding: 12px; border-radius: 8px; font-weight: bold; margin-bottom: 12px; font-size: 14px; }
+        .warning-box { background: #fef3c7; color: #92400e; padding: 12px; border-radius: 8px; font-weight: bold; margin-bottom: 12px; font-size: 14px; }
+        .num { text-align: right !important; font-family: monospace; }
+        code { font-family: monospace; background: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 13px; color: #0f172a; }
     </style>
 </head>
 <body>
-    <h1>📦 Складський облік</h1>
-    <p class="subtitle">Демо: <strong>prisma-accumulator</strong> + pg_accumulator — баланси та рухи товарів</p>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <div>
+            <h1 data-i18n="title">📦 Warehouse</h1>
+            <p class="subtitle" data-i18n="subtitle">Demo: <strong>prisma-accumulator</strong> + pg_accumulator — balances and movements</p>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+            <label for="lang-select" style="font-size:14px; color:#334e68;">Language</label>
+            <select id="lang-select" style="padding:8px; border-radius:8px;">
+                <option value="en">English</option>
+                <option value="uk">Українська</option>
+            </select>
+        </div>
+    </div>
 
     <div class="tabs">
-        <button class="tab active" data-tab="balances">Залишки</button>
-        <button class="tab" data-tab="operations">Операції</button>
-        <button class="tab" data-tab="movements">Історія рухів</button>
-        <button class="tab" data-tab="registers">Реєстри</button>
+        <button class="tab active" data-tab="balances" data-i18n="tab_balances">Balances</button>
+        <button class="tab" data-tab="ledger" data-i18n="tab_ledger">Ledger</button>
+        <button class="tab" data-tab="operations" data-i18n="tab_operations">Operations</button>
+        <button class="tab" data-tab="movements" data-i18n="tab_movements">Movements</button>
+        <button class="tab" data-tab="registers" data-i18n="tab_registers">Registers</button>
     </div>
 
     <!-- Balances Tab -->
     <div class="tab-content active" id="tab-balances">
         <div class="card">
-            <h2>Поточні залишки на складах</h2>
-            <button onclick="loadBalances()">🔄 Оновити</button>
+            <h2 data-i18n="balances_heading">Current balances by warehouse</h2>
+            <button onclick="loadBalances()" data-i18n="btn_refresh">🔄 Refresh</button>
             <table id="balances-table" style="margin-top: 12px;">
-                <thead><tr><th>Склад</th><th>Товар</th><th>Кількість</th><th>Вартість</th></tr></thead>
+                <thead><tr><th data-i18n="th_warehouse">Warehouse</th><th data-i18n="th_product">Product</th><th data-i18n="th_quantity">Quantity</th><th data-i18n="th_cost">Cost</th></tr></thead>
                 <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Ledger Tab: Double-Entry Bookkeeping -->
+    <div class="tab-content" id="tab-ledger">
+        <!-- Auditing & Soundness Status -->
+        <div class="card" style="margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; padding: 18px 24px;">
+            <div>
+                <h3 style="color:#0f5132; margin: 0 0 4px 0;" data-i18n="ledger_audit_title">🛡️ Accounting audit</h3>
+                <p style="color:#475569; font-size: 13px; margin: 0;" data-i18n="ledger_audit_sub">Realtime integrity checks via pg_accumulator</p>
+            </div>
+            <div id="ledger-soundness-badge" class="badge" style="font-size: 14px; padding: 8px 16px;">
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- Trial Balance -->
+            <div class="card">
+                <h2 data-i18n="trial_balance">📊 Trial Balance</h2>
+                <p style="color: #64748b; font-size: 12px; margin-bottom: 12px;" data-i18n="trial_balance_sub">Current state and balances of ledger accounts</p>
+                <button onclick="loadLedger()" data-i18n="btn_refresh">🔄 Refresh Ledger</button>
+                <table id="ledger-balances-table" style="margin-top: 12px;">
+                    <thead>
+                        <tr>
+                            <th data-i18n="th_account">Account</th>
+                            <th data-i18n="th_type">Type</th>
+                            <th data-i18n="th_subconto">Subconto (Analytics)</th>
+                            <th class="num">DR</th>
+                            <th class="num">CR</th>
+                            <th class="num">Balance</th>
+                            <th data-i18n="th_currency">Currency</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Dynamically filled -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- New Ledger Entry Form -->
+            <div class="card">
+                <h2 data-i18n="ledger_entry">✍️ Register ledger entry (double entry)</h2>
+                <div style="font-size: 13px; color:#475569; margin-bottom: 16px; line-height: 1.5;">
+                    <ul style="padding-left: 20px;">
+                        <li data-i18n="note_active"><strong>Active accounts (1xx/2xx/9xx):</strong> increase on Debit, decrease on Credit.</li>
+                        <li data-i18n="note_passive"><strong>Passive accounts (4xx/5xx/7xx):</strong> increase on Credit, decrease on Debit.</li>
+                    </ul>
+                </div>
+                
+                <div class="form-row" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+                    <div>
+                        <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px; color:#1e293b;" data-i18n="lbl_account_dr">Account Debit (Dr)</label>
+                        <select id="ledger-account-dr" style="width:100%;">
+                            <option value="10">10 Bank account (Asset)</option>
+                            <option value="28">28 Inventory (Asset)</option>
+                            <option value="90">90 Rent & services (Expense)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px; color:#1e293b;" data-i18n="lbl_account_cr">Account Credit (Cr)</label>
+                        <select id="ledger-account-cr" style="width:100%;">
+                            <option value="10">10 Bank account (Asset)</option>
+                            <option value="40" selected>40 Capital (Liability)</option>
+                            <option value="50">50 Short-term loans (Liability)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+                    <div>
+                        <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px; color:#1e293b;" data-i18n="lbl_subconto_dr">Subconto Debit (JSON)</label>
+                        <input type="text" id="ledger-subconto-dr" placeholder='{"warehouse_id": 1}' style="width:100;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px; color:#1e293b;" data-i18n="lbl_subconto_cr">Subconto Credit (JSON)</label>
+                        <input type="text" id="ledger-subconto-cr" placeholder='{"owner": "Founder"}' style="width:100;">
+                    </div>
+                </div>
+
+                <div class="form-row" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+                    <div>
+                        <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px; color:#1e293b;" data-i18n="lbl_amount">Amount</label>
+                        <input type="number" id="ledger-amount" placeholder="1000.00" step="0.01" style="width:100;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px; color:#1e293b;" data-i18n="lbl_currency">Currency</label>
+                        <select id="ledger-currency" style="width:100;">
+                            <option value="USD">USD</option>
+                            <option value="EUR">EUR</option>
+                            <option value="UAH">UAH</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:16px;">
+                    <div>
+                        <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px; color:#1e293b;" data-i18n="lbl_recorder">Document (Recorder ID)</label>
+                        <input type="text" id="ledger-recorder" placeholder="capital:1" style="width:100;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px; color:#1e293b;" data-i18n="lbl_period">Posting date</label>
+                        <input type="date" id="ledger-period" style="width:100;">
+                    </div>
+                </div>
+
+                <button onclick="postLedger()" style="width:100%; padding: 12px; font-weight:bold;" data-i18n="btn_post_ledger">Post ledger entry</button>
+                <div class="status" id="led-post-status"></div>
+            </div>
+        </div>
+
+        <!-- Cancel Booking Card -->
+        <div class="card" style="margin-top:20px;">
+            <h2 data-i18n="ledger_unpost_title">🚫 Unpost / Delete posting by recorder</h2>
+            <div class="form-row">
+                <input type="text" id="ledger-unpost-recorder" placeholder="Recorder ID (e.g., purchase:1)" style="width: 300px;">
+                <button class="danger" onclick="doLedgerUnpost()" data-i18n="btn_ledger_unpost">Unpost</button>
+            </div>
+            <div class="status" id="led-unpost-status"></div>
+        </div>
+
+        <!-- General Journal -->
+        <div class="card" style="margin-top: 20px;">
+            <h2 data-i18n="journal_title">📖 General Journal</h2>
+            <p style="color:#64748b; font-size: 12px; margin-bottom: 12px;" data-i18n="journal_sub">History of double-entry postings in the general_ledger register</p>
+            <table id="ledger-movements-table">
+                <thead>
+                    <tr>
+                        <th>Recorder</th>
+                        <th>Date</th>
+                        <th>Debit Account</th>
+                        <th>Debit Subconto</th>
+                        <th>Credit Account</th>
+                        <th>Credit Subconto</th>
+                        <th class="num">Amount</th>
+                        <th>Currency</th>
+                        <th>Recorded</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Dynamically filled -->
+                </tbody>
             </table>
         </div>
     </div>
@@ -63,39 +224,39 @@
     <div class="tab-content" id="tab-operations">
         <div class="grid">
             <div class="card">
-                <h2>➕ Надходження товару</h2>
+                <h2 data-i18n="op_receipt">➕ Receipt</h2>
                 <div class="form-row">
                     <select id="receipt-warehouse"></select>
                     <select id="receipt-product"></select>
                 </div>
                 <div class="form-row">
-                    <input type="number" id="receipt-qty" placeholder="Кількість" min="1">
-                    <input type="number" id="receipt-cost" placeholder="Вартість" min="0" step="0.01">
-                    <button onclick="postReceipt()">Оприбуткувати</button>
+                    <input type="number" id="receipt-qty" placeholder="Quantity" min="1">
+                    <input type="number" id="receipt-cost" placeholder="Cost" min="0" step="0.01">
+                    <button onclick="postReceipt()" data-i18n="btn_post_receipt">Post receipt</button>
                 </div>
                 <div class="status" id="receipt-status"></div>
             </div>
 
             <div class="card">
-                <h2>➖ Відвантаження товару</h2>
+                <h2 data-i18n="op_shipment">➖ Shipment</h2>
                 <div class="form-row">
                     <select id="shipment-warehouse"></select>
                     <select id="shipment-product"></select>
                 </div>
                 <div class="form-row">
-                    <input type="number" id="shipment-qty" placeholder="Кількість" min="1">
-                    <input type="number" id="shipment-cost" placeholder="Вартість" min="0" step="0.01">
-                    <button onclick="postShipment()">Відвантажити</button>
+                    <input type="number" id="shipment-qty" placeholder="Quantity" min="1">
+                    <input type="number" id="shipment-cost" placeholder="Cost" min="0" step="0.01">
+                    <button onclick="postShipment()" data-i18n="btn_post_shipment">Post shipment</button>
                 </div>
                 <div class="status" id="shipment-status"></div>
             </div>
         </div>
 
         <div class="card">
-            <h2>🚫 Скасування операції</h2>
+            <h2 data-i18n="op_unpost_title">🚫 Cancel operation</h2>
             <div class="form-row">
-                <input type="text" id="unpost-recorder" placeholder="Recorder ID (напр. receipt:17...)" style="width: 300px;">
-                <button class="danger" onclick="doUnpost()">Скасувати</button>
+                <input type="text" id="unpost-recorder" placeholder="Recorder ID (e.g. receipt:17...)" style="width: 300px;">
+                <button class="danger" onclick="doUnpost()" data-i18n="btn_unpost">Cancel</button>
             </div>
             <div class="status" id="unpost-status"></div>
         </div>
@@ -104,10 +265,10 @@
     <!-- Movements Tab -->
     <div class="tab-content" id="tab-movements">
         <div class="card">
-            <h2>Останні рухи (movements)</h2>
-            <button onclick="loadMovements()">🔄 Оновити</button>
+            <h2 data-i18n="movements_title">Recent movements</h2>
+            <button onclick="loadMovements()" data-i18n="btn_refresh">🔄 Refresh</button>
             <table id="movements-table" style="margin-top: 12px;">
-                <thead><tr><th>ID</th><th>Recorder</th><th>Період</th><th>Склад</th><th>Товар</th><th>Кількість</th><th>Вартість</th></tr></thead>
+                <thead><tr><th>ID</th><th>Recorder</th><th data-i18n="th_period">Period</th><th data-i18n="th_warehouse">Warehouse</th><th data-i18n="th_product">Product</th><th data-i18n="th_quantity">Quantity</th><th data-i18n="th_cost">Cost</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -116,10 +277,10 @@
     <!-- Registers Tab -->
     <div class="tab-content" id="tab-registers">
         <div class="card">
-            <h2>Зареєстровані регістри накопичення</h2>
-            <button onclick="loadRegisters()">🔄 Оновити</button>
+            <h2 data-i18n="registers_title">Registered accumulation registers</h2>
+            <button onclick="loadRegisters()" data-i18n="btn_refresh">🔄 Refresh</button>
             <table id="registers-table" style="margin-top: 12px;">
-                <thead><tr><th>Назва</th><th>Тип</th><th>Вимірів</th><th>Ресурсів</th><th>Рухів</th><th>Створено</th></tr></thead>
+                <thead><tr><th data-i18n="th_name">Name</th><th data-i18n="th_kind">Kind</th><th data-i18n="th_dimensions">Dimensions</th><th data-i18n="th_resources">Resources</th><th data-i18n="th_movements">Movements</th><th data-i18n="th_created">Created</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -137,13 +298,105 @@
         });
 
         // --- API helpers ---
+        let lang = 'en';
+        let t = {};
+
         async function api(url, opts) {
+            opts = opts || {};
+            opts.headers = Object.assign({}, opts.headers || {}, { 'X-Lang': lang });
             const res = await fetch(url, opts);
             return res.json();
         }
         async function apiPost(url, data) {
             return api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         }
+
+        const TRANSLATIONS = {
+            en: {
+                title: '📦 Warehouse',
+                subtitle: 'Demo: prisma-accumulator + pg_accumulator — balances and movements',
+                tab_balances: 'Balances', tab_ledger: 'Ledger', tab_operations: 'Operations', tab_movements: 'Movements', tab_registers: 'Registers',
+                balances_heading: 'Current balances by warehouse',
+                btn_refresh: '🔄 Refresh',
+                th_warehouse: 'Warehouse', th_product: 'Product', th_quantity: 'Quantity', th_cost: 'Cost',
+                ledger_audit_title: '🛡️ Accounting audit', ledger_audit_sub: 'Realtime integrity checks via pg_accumulator',
+                trial_balance: '📊 Trial Balance', trial_balance_sub: 'Current state and balances of ledger accounts',
+                ledger_entry: '✍️ Register ledger entry (double entry)', note_active: 'Active accounts (1xx/2xx/9xx): increase on Debit, decrease on Credit.', note_passive: 'Passive accounts (4xx/5xx/7xx): increase on Credit, decrease on Debit.',
+                lbl_account_dr: 'Account Debit (Dr)', lbl_account_cr: 'Account Credit (Cr)',
+                lbl_subconto_dr: 'Subconto Debit (JSON)', lbl_subconto_cr: 'Subconto Credit (JSON)', lbl_amount: 'Amount', lbl_currency: 'Currency', lbl_recorder: 'Document (Recorder ID)', lbl_period: 'Posting date',
+                btn_post_ledger: 'Post ledger entry', btn_ledger_unpost: 'Unpost', journal_title: '📖 General Journal', journal_sub: 'History of double-entry postings in the general_ledger register',
+                op_receipt: '➕ Receipt', btn_post_receipt: 'Post receipt', op_shipment: '➖ Shipment', btn_post_shipment: 'Post shipment', op_unpost_title: '🚫 Cancel operation', btn_unpost: 'Cancel',
+                movements_title: 'Recent movements', registers_title: 'Registered accumulation registers',
+                th_period: 'Period', th_name: 'Name', th_kind: 'Kind', th_dimensions: 'Dimensions', th_resources: 'Resources', th_movements: 'Movements', th_created: 'Created',
+                no_data: 'No data', no_movements: 'No movements',
+                receipt_ok: '✅ Posted: {recorder}', shipment_ok: '✅ Shipped: {recorder}', unpost_ok: '✅ Cancelled (deleted movements: {deleted})',
+                ledger_post_ok: '✅ Posting recorded: {recorder}', ledger_unpost_ok: '✅ Unposted (deleted movements: {deleted})',
+                provide_amount_error: '❌ Provide a valid posting amount',
+                account_10: '10 Bank account (Asset)', account_28: '28 Inventory (Asset)', account_90: '90 Rent & services (Expense)', account_40: '40 Capital (Liability)', account_50: '50 Short-term loans (Liability)'
+            },
+            uk: {
+                title: '📦 Складський облік',
+                subtitle: 'Демо: prisma-accumulator + pg_accumulator — баланси та рухи товарів',
+                tab_balances: 'Залишки', tab_ledger: 'Бухгалтерія (Ledger)', tab_operations: 'Операції', tab_movements: 'Історія рухів', tab_registers: 'Реєстри',
+                balances_heading: 'Поточні залишки на складах',
+                btn_refresh: '🔄 Оновити',
+                th_warehouse: 'Склад', th_product: 'Товар', th_quantity: 'Кількість', th_cost: 'Вартість',
+                ledger_audit_title: '🛡️ Бухгалтерський аудит системи', ledger_audit_sub: 'Автоматична перевірка тотожностей балансу в реальному часі за допомогою pg_accumulator',
+                trial_balance: '📊 Оборотно-сальдова відомість (Trial Balance)', trial_balance_sub: 'Поточний стан та залишки на бухгалтерських рахунках',
+                ledger_entry: '✍️ Реєстрація господарської операції (Подвійний запис)', note_active: 'Активні рахунки (1xx/2xx/9xx): збільшення по Дебету, зменшення по Кредиту.', note_passive: 'Пасивні рахунки (4xx/5xx/7xx): збільшення по Кредиту, зменшення по Дебету.',
+                lbl_account_dr: 'Рахунок Дебету (Dr)', lbl_account_cr: 'Рахунок Кредиту (Cr)',
+                lbl_subconto_dr: 'Субконто Дебету (JSON)', lbl_subconto_cr: 'Субконто Кредиту (JSON)', lbl_amount: 'Сума проводки', lbl_currency: 'Валюта', lbl_recorder: 'Документ (Recorder ID)', lbl_period: 'Дата проведення',
+                btn_post_ledger: 'Записати проводку в Книгу', btn_ledger_unpost: 'Анулювати проведення', journal_title: '📖 Спільний журнал проведень (General Journal)', journal_sub: 'Історія подвійних записів у регістрі подвійного запису general_ledger',
+                op_receipt: '➕ Надходження товару', btn_post_receipt: 'Оприбуткувати', op_shipment: '➖ Відвантаження товару', btn_post_shipment: 'Відвантажити', op_unpost_title: '🚫 Скасування операції', btn_unpost: 'Скасувати',
+                movements_title: 'Останні рухи', registers_title: 'Зареєстровані регістри накопичення',
+                th_period: 'Період', th_name: 'Назва', th_kind: 'Тип', th_dimensions: 'Вимірів', th_resources: 'Ресурсів', th_movements: 'Рухів', th_created: 'Створено',
+                no_data: 'Немає даних', no_movements: 'Немає рухів',
+                receipt_ok: '✅ Оприбутковано: {recorder}', shipment_ok: '✅ Відвантажено: {recorder}', unpost_ok: '✅ Скасовано (видалено рухів: {deleted})',
+                ledger_post_ok: '✅ Проведення записано: {recorder}', ledger_unpost_ok: '✅ Сторновано (видалено рухів: {deleted})',
+                provide_amount_error: '❌ Вкажіть коректну суму проводки',
+                account_10: '10 Рахунок у банку (Asset)', account_28: '28 Товари на складі (Asset)', account_90: '90 Оренда та послуги (Expense)', account_40: '40 Статутний капітал (Liability)', account_50: '50 Короткострокові позики (Liability)'
+            }
+        };
+
+        function applyTranslations() {
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.dataset.i18n;
+                if (key && t[key]) el.textContent = t[key];
+            });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.dataset.i18nPlaceholder;
+                if (key && t[key]) el.placeholder = t[key];
+            });
+            // populate account option labels
+            const map = [{id:'ledger-account-dr', keys: ['account_10','account_28','account_90']},{id:'ledger-account-cr', keys:['account_10','account_40','account_50']}];
+            for (const m of map) {
+                const sel = document.getElementById(m.id);
+                if (!sel) continue;
+                sel.innerHTML = m.keys.map(k => {
+                    const label = t[k] || k;
+                    const val = label.split(' ')[0];
+                    return `<option value="${val}">${label}</option>`;
+                }).join('');
+            }
+        }
+
+        function setLang(l) {
+            lang = l && TRANSLATIONS[l] ? l : 'en';
+            t = TRANSLATIONS[lang];
+            localStorage.setItem('demo_lang', lang);
+            document.documentElement.lang = lang;
+            applyTranslations();
+        }
+
+        // init language selector
+        const saved = localStorage.getItem('demo_lang') || new URLSearchParams(window.location.search).get('lang') || navigator.language;
+        const initial = (saved && saved.startsWith('uk')) ? 'uk' : 'en';
+        document.addEventListener('DOMContentLoaded', () => {
+            const sel = document.getElementById('lang-select');
+            setLang(initial);
+            sel.value = lang;
+            sel.addEventListener('change', () => setLang(sel.value));
+        });
 
         // --- Load reference data into selects ---
         let products = [], warehouses = [];
@@ -168,7 +421,7 @@
         async function loadBalances() {
             const data = await api('/api/balances');
             const tbody = document.querySelector('#balances-table tbody');
-            if (!data.length) { tbody.innerHTML = '<tr><td colspan="4" style="color:#999">Немає даних</td></tr>'; return; }
+            if (!data.length) { tbody.innerHTML = `<tr><td colspan="4" style="color:#999">${t.no_data}</td></tr>`; return; }
             tbody.innerHTML = data.map(r => `<tr>
                 <td>${r.warehouse_name}</td>
                 <td>${r.product_name}</td>
@@ -181,7 +434,7 @@
         async function loadMovements() {
             const data = await api('/api/movements');
             const tbody = document.querySelector('#movements-table tbody');
-            if (!data.length) { tbody.innerHTML = '<tr><td colspan="7" style="color:#999">Немає рухів</td></tr>'; return; }
+            if (!data.length) { tbody.innerHTML = `<tr><td colspan="7" style="color:#999">${t.no_movements}</td></tr>`; return; }
             tbody.innerHTML = data.map(r => `<tr>
                 <td>${r.id}</td>
                 <td style="font-size:11px">${r.recorder}</td>
@@ -218,7 +471,7 @@
             const res = await apiPost('/api/receipt', data);
             const el = document.getElementById('receipt-status');
             if (res.ok) {
-                el.className = 'status'; el.textContent = `✅ Оприбутковано: ${res.recorder}`;
+                el.className = 'status'; el.textContent = t.receipt_ok.replace('{recorder}', res.recorder);
                 document.getElementById('receipt-qty').value = '';
                 document.getElementById('receipt-cost').value = '';
             } else {
@@ -236,7 +489,7 @@
             const res = await apiPost('/api/shipment', data);
             const el = document.getElementById('shipment-status');
             if (res.ok) {
-                el.className = 'status'; el.textContent = `✅ Відвантажено: ${res.recorder}`;
+                el.className = 'status'; el.textContent = t.shipment_ok.replace('{recorder}', res.recorder);
                 document.getElementById('shipment-qty').value = '';
                 document.getElementById('shipment-cost').value = '';
             } else {
@@ -250,15 +503,174 @@
             const res = await apiPost('/api/unpost', { recorder });
             const el = document.getElementById('unpost-status');
             if (res.ok) {
-                el.className = 'status'; el.textContent = `✅ Скасовано (видалено рухів: ${res.deleted})`;
+                el.className = 'status'; el.textContent = t.unpost_ok.replace('{deleted}', String(res.deleted));
                 document.getElementById('unpost-recorder').value = '';
             } else {
                 el.className = 'status error'; el.textContent = `❌ ${res.error}`;
             }
         }
 
+        // --- Ledger functions ---
+        async function loadLedger() {
+            try {
+                const [balances, movements, verification] = await Promise.all([
+                    api('/api/ledger/balances'),
+                    api('/api/ledger/movements'),
+                    api('/api/ledger/verify')
+                ]);
+
+                // 1. Render Audit Soundness Badge
+                const sBadge = document.getElementById('ledger-soundness-badge');
+                if (verification.sound) {
+                    sBadge.className = 'badge badge-pos';
+                    sBadge.textContent = '✓ Sound';
+                } else {
+                    sBadge.className = 'badge badge-neg';
+                    sBadge.textContent = '⚠ Unsound';
+                }
+
+                // 2. Render Trial Balance Table
+                const balBody = document.querySelector('#ledger-balances-table tbody');
+                if (!balances.length) {
+                    balBody.innerHTML = `<tr><td colspan="7" style="color:#999; text-align:center;">${t.no_data}</td></tr>`;
+                } else {
+                    let totalDr = 0;
+                    let totalCr = 0;
+                    let activeTotal = 0;
+                    let passiveTotal = 0;
+
+                    let html = '';
+                    for (const b of balances) {
+                        const dr = Number(b.amount_dr || 0);
+                        const cr = Number(b.amount_cr || 0);
+                        const valValue = Number(b.balance || 0);
+                        totalDr += dr;
+                        totalCr += cr;
+
+                        if (b.acc_type === 'A') {
+                            activeTotal += valValue;
+                        } else {
+                            passiveTotal += valValue;
+                        }
+
+                        const typeBadge = b.acc_type === 'A' 
+                            ? '<span class="acc-active">Active</span>' 
+                            : '<span class="acc-passive">Passive</span>';
+
+                        const subStr = JSON.stringify(b.subconto || {});
+
+                        html += `<tr>
+                            <td><strong>${b.account}</strong></td>
+                            <td>${typeBadge}</td>
+                            <td><span class="subconto-box">${subStr}</span></td>
+                            <td class="num">${dr.toFixed(2)}</td>
+                            <td class="num">${cr.toFixed(2)}</td>
+                            <td class="num" style="font-weight:bold; color:#0f766e;">${valValue.toFixed(2)}</td>
+                            <td><strong>${b.currency || 'USD'}</strong></td>
+                        </tr>`;
+                    }
+
+                    // Add total sum rows
+                    const matchText = totalDr.toFixed(2) === totalCr.toFixed(2)
+                        ? '<span style="color:#0f5132; font-weight:bold;">✓ Debit and Credit match</span>'
+                        : '<span style="color:#991b1b; font-weight:bold;">⚠ Debit/Credit mismatch!</span>';
+
+                    html += `<tr style="background:#f1f5f9; font-weight:bold;">
+                        <td colspan="3">Summary turnovers for period:</td>
+                        <td class="num">${totalDr.toFixed(2)}</td>
+                        <td class="num">${totalCr.toFixed(2)}</td>
+                        <td colspan="2" style="text-align:center;">${matchText}</td>
+                    </tr>`;
+
+                    html += `<tr style="background:#f0fdf4; font-weight:bold;">
+                        <td colspan="3">Total capitals & assets:</td>
+                        <td colspan="2" style="color: #0f766e;">Assets (DR-CR): ${activeTotal.toFixed(2)} USD</td>
+                        <td colspan="2" style="color: #b45309;">Liabilities & Equity (CR-DR): ${passiveTotal.toFixed(2)} USD</td>
+                    </tr>`;
+
+                    balBody.innerHTML = html;
+                }
+
+                // 3. Render General Journal movements
+                const movesBody = document.querySelector('#ledger-movements-table tbody');
+                if (!movements.length) {
+                    movesBody.innerHTML = `<tr><td colspan="9" style="color:#999; text-align:center;">${t.no_data}</td></tr>`;
+                } else {
+                    movesBody.innerHTML = movements.map(m => {
+                        const sDr = JSON.stringify(m.subconto_dr || {});
+                        const sCr = JSON.stringify(m.subconto_cr || {});
+                        const datePart = m.period ? m.period.slice(0, 10) : '';
+                        const recAt = m.recorded_at ? m.recorded_at.slice(0, 19).replace('T', ' ') : '';
+                        return `<tr>
+                            <td><code>${m.recorder}</code></td>
+                            <td>${datePart}</td>
+                            <td><span class="acc-active">Dr</span> <strong>${m.account_dr}</strong></td>
+                            <td><span class="subconto-box">${sDr}</span></td>
+                            <td><span class="acc-passive">Cr</span> <strong>${m.account_cr}</strong></td>
+                            <td><span class="subconto-box">${sCr}</span></td>
+                            <td class="num" style="font-weight:bold; color:#0f766e;">${Number(m.amount || 0).toFixed(2)}</td>
+                            <td><strong>${m.currency}</strong></td>
+                            <td style="font-size:11px; color:#64748b;">${recAt}</td>
+                        </tr>`;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function postLedger() {
+            const data = {
+                recorder: document.getElementById('ledger-recorder').value.trim() || `ledger:${Date.now()}`,
+                period: document.getElementById('ledger-period').value || new Date().toISOString().slice(0, 10),
+                account_dr: document.getElementById('ledger-account-dr').value,
+                subconto_dr: document.getElementById('ledger-subconto-dr').value.trim() || '{}',
+                account_cr: document.getElementById('ledger-account-cr').value,
+                subconto_cr: document.getElementById('ledger-subconto-cr').value.trim() || '{}',
+                amount: Number(document.getElementById('ledger-amount').value),
+                currency: document.getElementById('ledger-currency').value,
+            };
+
+            if (!data.amount || data.amount <= 0) {
+                const el = document.getElementById('led-post-status');
+                el.className = 'status error'; el.textContent = t.provide_amount_error;
+                return;
+            }
+
+            const res = await apiPost('/api/ledger/post', data);
+            const el = document.getElementById('led-post-status');
+            if (res.ok) {
+                el.className = 'status'; el.textContent = t.ledger_post_ok.replace('{recorder}', data.recorder);
+                // clear inputs
+                document.getElementById('ledger-amount').value = '';
+                document.getElementById('ledger-recorder').value = '';
+                document.getElementById('ledger-subconto-dr').value = '';
+                document.getElementById('ledger-subconto-cr').value = '';
+                // Reload ledger tables
+                await loadLedger();
+                await loadRegisters();
+            } else {
+                el.className = 'status error'; el.textContent = `❌ ${res.error}`;
+            }
+        }
+
+        async function doLedgerUnpost() {
+            const recorder = document.getElementById('ledger-unpost-recorder').value.trim();
+            if (!recorder) return;
+            const res = await apiPost('/api/ledger/unpost', { recorder });
+            const el = document.getElementById('led-unpost-status');
+            if (res.ok) {
+                el.className = 'status'; el.textContent = t.ledger_unpost_ok.replace('{deleted}', String(res.deleted));
+                document.getElementById('ledger-unpost-recorder').value = '';
+                await loadLedger();
+                await loadRegisters();
+            } else {
+                el.className = 'status error'; el.textContent = `❌ ${res.error}`;
+            }
+        }
+
         // --- Init ---
-        loadRefs().then(() => { loadBalances(); loadMovements(); loadRegisters(); });
+        loadRefs().then(() => { loadBalances(); loadLedger(); loadMovements(); loadRegisters(); });
     </script>
 </body>
 </html>

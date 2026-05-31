@@ -8,7 +8,7 @@
 CREATE TABLE IF NOT EXISTS accum._registers (
     name           text PRIMARY KEY,
     kind           text NOT NULL DEFAULT 'balance'
-                       CHECK (kind IN ('balance', 'turnover')),
+                       CHECK (kind IN ('balance', 'turnover', 'ledger')),
     dimensions     jsonb NOT NULL,
     resources      jsonb NOT NULL,
     totals_period  text NOT NULL DEFAULT 'day'
@@ -202,9 +202,18 @@ DECLARE
     hash_args text := '';
     hash_body text := '';
     arg_idx   int  := 0;
+    v_kind    text;
 BEGIN
     PERFORM accum._validate_name(p_name);
     PERFORM accum._validate_dimensions(p_dimensions);
+
+    SELECT kind INTO v_kind FROM accum._registers WHERE name = p_name;
+
+    IF v_kind = 'ledger' THEN
+        hash_args := 'p_subconto jsonb';
+        hash_body := 'coalesce(p_subconto::text, ''{}'')';
+        arg_idx := 1;
+    END IF;
 
     FOR dim_key, dim_type IN SELECT key, value FROM jsonb_each_text(p_dimensions) ORDER BY key
     LOOP

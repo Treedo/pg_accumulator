@@ -9,6 +9,7 @@ transaction — the key selling point for real-world applications.
 """
 
 import os
+import json
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -107,6 +108,14 @@ inventory = define_register(
     totals_period="day",
 )
 
+general_ledger = define_register(
+    name="general_ledger",
+    kind="ledger",
+    dimensions={"currency": "text"},
+    resources={"amount": "numeric(18,2)"},
+    totals_period="day",
+)
+
 
 # ---------------------------------------------------------------------------
 # JSON serializer helper
@@ -159,6 +168,65 @@ def index():
     except Exception:
         pass
 
+    # Fetch Ledger Balances & Movements
+    ledger_balances = []
+    ledger_movements = []
+    ledger_sound = True
+
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            result = conn.execute(
+                text("""
+                    SELECT 
+                        account, 
+                        subconto, 
+                        amount_dr, 
+                        amount_cr, 
+                        currency,
+                        CASE 
+                            WHEN account ~ '^(1|2|9)' THEN amount_dr - amount_cr
+                            WHEN account ~ '^(4|5|7)' THEN amount_cr - amount_dr
+                            ELSE amount_dr - amount_cr
+                        END as balance,
+                        CASE
+                            WHEN account ~ '^(1|2|9)' THEN 'A' -- Active (Asset / Expense)
+                            WHEN account ~ '^(4|5|7)' THEN 'P' -- Passive (Liabilities / Equity / Sales)
+                            ELSE 'AP'
+                        END as acc_type
+                    FROM accum.general_ledger_balance_cache
+                    ORDER BY account, subconto
+                """)
+            )
+            ledger_balances = [dict(r._mapping) for r in result]
+    except Exception:
+        pass
+
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            result = conn.execute(
+                text("""
+                    SELECT id, recorder, period, account_dr, subconto_dr, account_cr, subconto_cr, currency, amount, recorded_at
+                    FROM accum.general_ledger_movements
+                    ORDER BY recorded_at DESC
+                    LIMIT 50
+                """)
+            )
+            ledger_movements = [dict(r._mapping) for r in result]
+    except Exception:
+        pass
+
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            result = conn.execute(text("SELECT accum.register_ledger_verify('general_ledger')"))
+            val = result.scalar()
+            if val is not None:
+                ledger_sound = bool(val)
+    except Exception:
+        pass
+
     # ORM entities
     with SessionLocal() as session:
         warehouses = session.query(Warehouse).order_by(Warehouse.id).all()
@@ -194,6 +262,10 @@ def index():
             products=products,
             clients=clients,
             orders=orders,
+            ledger_balances=ledger_balances,
+            ledger_movements=ledger_movements,
+            ledger_sound=ledger_sound,
+            today=str(date.today()),
             error=error,
         )
 
@@ -201,23 +273,67 @@ def index():
 @app.route("/post", methods=["POST"])
 def post_movement():
     try:
+        register = request.form.get("register", "inventory")
         recorder = request.form["recorder"]
         period = request.form.get("period") or str(date.today())
-        warehouse = int(request.form["warehouse"])
-        product = int(request.form["product"])
-        quantity = float(request.form["quantity"])
-        amount = float(request.form["amount"])
 
-        handle = accum.use(inventory)
-        count = handle.post({
-            "recorder": recorder,
-            "period": period,
-            "warehouse": warehouse,
-            "product": product,
-            "quantity": quantity,
-            "amount": amount,
-        })
-        flash(f"Posted successfully: {recorder} ({count} movement)", "success")
+        if register == "general_ledger":
+            account_dr = request.form["account_dr"]
+            account_cr = request.form["account_cr"]
+            currency = request.form.get("currency", "USD")
+            amount = float(request.form["amount"])
+
+            # Safely parse subconto
+            s_dr = request.form.get("subconto_dr", "{}").strip()
+            if not s_dr:
+                subconto_dr = {}
+            elif s_dr.startswith("{"):
+                try:
+                    subconto_dr = json.loads(s_dr)
+                except Exception:
+                    subconto_dr = {"note": s_dr}
+            else:
+                subconto_dr = {"name": s_dr}
+
+            s_cr = request.form.get("subconto_cr", "{}").strip()
+            if not s_cr:
+                subconto_cr = {}
+            elif s_cr.startswith("{"):
+                try:
+                    subconto_cr = json.loads(s_cr)
+                except Exception:
+                    subconto_cr = {"note": s_cr}
+            else:
+                subconto_cr = {"name": s_cr}
+
+            handle = accum.use(general_ledger)
+            count = handle.post({
+                "recorder": recorder,
+                "period": period,
+                "currency": currency,
+                "account_dr": account_dr,
+                "subconto_dr": subconto_dr,
+                "account_cr": account_cr,
+                "subconto_cr": subconto_cr,
+                "amount": amount,
+            })
+            flash(f"Posted ledger successfully: {recorder}", "success")
+        else:
+            warehouse = int(request.form["warehouse"])
+            product = int(request.form["product"])
+            quantity = float(request.form["quantity"])
+            amount = float(request.form["amount"])
+
+            handle = accum.use(inventory)
+            count = handle.post({
+                "recorder": recorder,
+                "period": period,
+                "warehouse": warehouse,
+                "product": product,
+                "quantity": quantity,
+                "amount": amount,
+            })
+            flash(f"Posted successfully: {recorder} ({count} movement)", "success")
     except AccumulatorError as e:
         flash(f"Accumulator error: {e}", "error")
     except Exception as e:
@@ -229,8 +345,11 @@ def post_movement():
 @app.route("/unpost", methods=["POST"])
 def unpost_movement():
     try:
+        register = request.form.get("register", "inventory")
         recorder = request.form["recorder"]
-        handle = accum.use(inventory)
+        
+        reg_to_use = general_ledger if register == "general_ledger" else inventory
+        handle = accum.use(reg_to_use)
         count = handle.unpost(recorder)
         flash(f"Unposted: {recorder} ({count} movement(s) removed)", "success")
     except AccumulatorError as e:

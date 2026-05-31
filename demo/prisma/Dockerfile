@@ -28,5 +28,5 @@ COPY --from=builder /app/demo/node_modules ./node_modules/
 COPY --from=builder /app/demo/dist ./dist/
 COPY demo/prisma/public ./public/
 
-EXPOSE 3000
+EXPOSE 3303
 CMD ["node", "dist/index.js"]

@@ -82,6 +82,12 @@
         .reg-kind { font-size: 0.8em; padding: 2px 8px; border-radius: 12px; }
         .reg-kind-balance { background: #0d1f0d; color: #3fb950; border: 1px solid #238636; }
         .reg-kind-turnover { background: #1f1a0d; color: #d29922; border: 1px solid #9e6a03; }
+        .reg-kind-ledger { background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; }
+        .subconto-box { font-family: monospace; font-size: 0.8em; color: #8b949e; background: #0d1117; padding: 2px 6px; border-radius: 4px; display: inline-block; border: 1px solid #30363d; }
+        .badge.sound { background: #0d1f0d; color: #3fb950; border: 1px solid #238636; }
+        .badge.warning { background: #1f0d0d; color: #f85149; border: 1px solid #da3633; }
+        .acc-active { background: #238636; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
+        .acc-passive { background: #9e6a03; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
         .reg-meta { font-size: 0.82em; color: #8b949e; }
 
         /* Header */
@@ -104,6 +110,23 @@
     </div>
     <p class="subtitle">Interactive demo of <strong>sqlalchemy-accumulator</strong> — the type-safe Python adapter for pg_accumulator</p>
 
+    <!-- System Info & Auditing -->
+    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-size: 0.88em; color: #8b949e; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
+        <div>
+            <strong>Registered registers:</strong>
+            {% for r in registers %}
+                <code>{{ r.name }}</code> ({{ r.kind }}){% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </div>
+        <div>
+            {% if ledger_sound %}
+                <span class="badge sound" style="margin:0">✓ Debit ≡ Credit audit passed</span>
+            {% else %}
+                <span class="badge warning" style="margin:0">⚠ Warning! Debit/Credit mismatch</span>
+            {% endif %}
+        </div>
+    </div>
+
     <!-- Flash messages -->
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -120,6 +143,7 @@
     <!-- Tabs -->
     <div class="tabs">
         <div class="tab active" onclick="switchTab('operations')" id="ops-tab">Operations</div>
+        <div class="tab" onclick="switchTab('ledger')" id="ledger-tab">Bookkeeping (Ledger)</div>
         <div class="tab" onclick="switchTab('orders')" id="orders-tab">Orders (ORM+Accum)</div>
         <div class="tab" onclick="switchTab('catalog')" id="catalog-tab">Catalog (ORM)</div>
         <div class="tab" onclick="switchTab('data')" id="data-tab">Live Data</div>
@@ -205,6 +229,205 @@
                     </div>
                     <button type="submit" class="btn-info">Repost</button>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: Bookkeeping (Ledger) -->
+    <div class="tab-content" id="tab-ledger">
+        <div class="grid">
+            <!-- Create a ledger entry -->
+            <div class="card">
+                <h2 style="margin-top:0">Create a Ledger Entry</h2>
+                <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Record double-entry posting to the General Ledger via <code>handle.post()</code></p>
+                <form method="POST" action="/post" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end;">
+                    <input type="hidden" name="register" value="general_ledger">
+                    <div class="field" style="grid-column: span 2">
+                        <label>Document (recorder)</label>
+                        <input name="recorder" placeholder="purchase:101" required value="ledger:{{ (ledger_movements|length) + 1 }}">
+                    </div>
+                    <div class="field">
+                        <label>Posting date</label>
+                        <input name="period" type="date" value="{{ today }}">
+                    </div>
+                    <div class="field">
+                        <label>Currency</label>
+                        <select name="currency">
+                            <option value="USD" selected>USD</option>
+                            <option value="EUR">EUR</option>
+                            <option value="UAH">UAH</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Debit account (Dr)</label>
+                        <select name="account_dr" required>
+                            <option value="10" selected>10 Cash &amp; Accounts (Asset)</option>
+                            <option value="28">28 Inventory (Asset)</option>
+                            <option value="90">90 Rent Expense (Asset/Expense)</option>
+                            <option value="40">40 Share Capital (Liability)</option>
+                            <option value="50">50 Bank Loans (Liability)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Debit subconto (JSON)</label>
+                        <input name="subconto_dr" placeholder='{"bank": "Main Bank"}' value='{"bank": "Main Bank"}'>
+                    </div>
+                    <div class="field">
+                        <label>Credit account (Cr)</label>
+                        <select name="account_cr" required>
+                            <option value="40" selected>40 Share Capital (Liability)</option>
+                            <option value="10">10 Cash &amp; Accounts (Asset)</option>
+                            <option value="28">28 Inventory (Asset)</option>
+                            <option value="90">90 Rent Expense (Asset/Expense)</option>
+                            <option value="50">50 Bank Loans (Liability)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Credit subconto (JSON)</label>
+                        <input name="subconto_cr" placeholder='{"owner": "Founder"}' value='{"owner": "Founder"}'>
+                    </div>
+                    <div class="field" style="grid-column: span 2">
+                        <label>Transaction amount</label>
+                        <input name="amount" type="number" step="0.01" value="1000" required>
+                    </div>
+                    <button type="submit" class="btn-primary" style="grid-column: span 2; width: 100%">Post Ledger Entry</button>
+                </form>
+            </div>
+
+            <!-- Cancel a ledger posting -->
+            <div class="card" style="display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                    <h2 style="margin-top:0">Cancel a Ledger Posting</h2>
+                    <p style="font-size: 0.85em; color: #8b949e; margin-bottom: 12px;">Reverses a posted ledger document and restores account balances via <code>handle.unpost()</code></p>
+                    <form method="POST" action="/unpost">
+                        <input type="hidden" name="register" value="general_ledger">
+                        <div class="field" style="flex:1">
+                            <label>Document (recorder)</label>
+                            <input name="recorder" placeholder="capital:1" required style="width: 100%">
+                        </div>
+                        <button type="submit" class="btn-danger">Reverse Posting</button>
+                    </form>
+                </div>
+                <div style="margin-top: 20px; padding-top: 15px; border-top: 1px dashed #30363d;">
+                    <h3>Account Type Guide:</h3>
+                    <ul style="font-size: 0.85em; line-height: 1.5; color: #8b949e; padding-left: 18px; list-style-type: none;">
+                        <li style="margin-bottom:6px;"><span class="acc-active" style="font-size:0.8em; margin-right:4px;">Active (1xx/2xx/9xx)</span> - Increases on Debit, decreases on Credit.</li>
+                        <li><span class="acc-passive" style="font-size:0.8em; margin-right:4px;">Passive (4xx/5xx/7xx)</span> - Increases on Credit, decreases on Debit.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trial Balance and General Journal -->
+        <div style="margin-top:24px;">
+            <h2>Trial Balance</h2>
+            <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Consolidated ledger account balances</p>
+            <div class="card">
+                {% if ledger_balances %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Account</th>
+                            <th>Type</th>
+                            <th>Subconto Details</th>
+                            <th class="num">Debit (DR)</th>
+                            <th class="num">Credit (CR)</th>
+                            <th class="num">Balance</th>
+                            <th>Currency</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set total_dr = [0.0] %}
+                        {% set total_cr = [0.0] %}
+                        {% set active_total = [0.0] %}
+                        {% set passive_total = [0.0] %}
+                        {% for b in ledger_balances %}
+                        <tr>
+                            <td><strong>{{ b.get('account', '') }}</strong></td>
+                            <td>
+                                {% if b.get('acc_type', '') == 'A' %}
+                                    <span class="acc-active" style="font-size:0.8em;">Active</span>
+                                {% else %}
+                                    <span class="acc-passive" style="font-size:0.8em;">Passive</span>
+                                {% endif %}
+                            </td>
+                            <td><span class="subconto-box">{{ b.get('subconto', '') }}</span></td>
+                            <td class="num">{{ "%.2f"|format(b.get('amount_dr', 0) | float) }}</td>
+                            <td class="num">{{ "%.2f"|format(b.get('amount_cr', 0) | float) }}</td>
+                            <td class="num" style="font-weight: bold; color: #58a6ff;">{{ "%.2f"|format(b.get('balance', 0) | float) }}</td>
+                            <td><strong>{{ b.get('currency', '') }}</strong></td>
+                        </tr>
+                        {% if total_dr.append(total_dr.pop() + (b.get('amount_dr', 0) | float)) %}{% endif %}
+                        {% if total_cr.append(total_cr.pop() + (b.get('amount_cr', 0) | float)) %}{% endif %}
+                        {% if b.get('acc_type', '') == 'A' %}
+                            {% if active_total.append(active_total.pop() + (b.get('balance', 0) | float)) %}{% endif %}
+                        {% else %}
+                            {% if passive_total.append(passive_total.pop() + (b.get('balance', 0) | float)) %}{% endif %}
+                        {% endif %}
+                        {% endfor %}
+                        <tr style="background: #1c2128; font-weight: bold;">
+                            <td colspan="3">Total transaction sums:</td>
+                            <td class="num">{{ "%.2f"|format(total_dr[0]) }}</td>
+                            <td class="num">{{ "%.2f"|format(total_cr[0]) }}</td>
+                            <td colspan="2" style="color: #3fb950; text-align: center;">
+                                {% if "%.2f"|format(total_dr[0]) == "%.2f"|format(total_cr[0]) %}
+                                    ✓ Totals match
+                                {% else %}
+                                    ⚠ Mismatch detected!
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr style="background: #1f6feb22; font-weight: bold;">
+                            <td colspan="3">Asset &amp; Liability totals:</td>
+                            <td colspan="2" style="color: #58a6ff;">Total assets: {{ "%.2f"|format(active_total[0]) }} USD</td>
+                            <td colspan="2" style="color: #d29922;">Total liabilities &amp; equity: {{ "%.2f"|format(passive_total[0]) }} USD</td>
+                        </tr>
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty">No bookkeeping data yet. Post first ledger entry.</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div style="margin-top:24px;">
+            <h2>General Journal</h2>
+            <p style="color:#8b949e; font-size:0.85em; margin-bottom:12px;">Recent ledger entries (double-entry movements)</p>
+            <div class="card">
+                {% if ledger_movements %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Document</th>
+                            <th>Date</th>
+                            <th>Debit Account</th>
+                            <th>Debit Subconto</th>
+                            <th>Credit Account</th>
+                            <th>Credit Subconto</th>
+                            <th class="num">Amount</th>
+                            <th>Currency</th>
+                            <th>Recorded At</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for lm in ledger_movements %}
+                        <tr>
+                            <td><code>{{ lm.get('recorder', '') }}</code></td>
+                            <td>{{ lm.get('period', '') | string | truncate(10, True, '') }}</td>
+                            <td><span class="acc-active" style="font-size:0.8em; margin-right:4px;">Dr</span><strong>{{ lm.get('account_dr', '') }}</strong></td>
+                            <td><span class="subconto-box">{{ lm.get('subconto_dr', '') }}</span></td>
+                            <td><span class="acc-passive" style="font-size:0.8em; margin-right:4px;">Cr</span><strong>{{ lm.get('account_cr', '') }}</strong></td>
+                            <td><span class="subconto-box">{{ lm.get('subconto_cr', '') }}</span></td>
+                            <td class="num positive">{{ "%.2f"|format(lm.get('amount', 0) | float) }}</td>
+                            <td><strong>{{ lm.get('currency', '') }}</strong></td>
+                            <td>{{ lm.get('recorded_at', '') | string | truncate(19, True, '') }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty">General journal is empty.</div>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -665,7 +888,7 @@ function switchTab(name) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     document.getElementById('tab-' + name).classList.add('active');
-    const tabBtn = {operations:'ops-tab', orders:'orders-tab', catalog:'catalog-tab', data:'data-tab', api:'api-tab', code:'code-tab', registers:'reg-tab'};
+    const tabBtn = {operations:'ops-tab', ledger:'ledger-tab', orders:'orders-tab', catalog:'catalog-tab', data:'data-tab', api:'api-tab', code:'code-tab', registers:'reg-tab'};
     document.getElementById(tabBtn[name]).classList.add('active');
 }
 

@@ -42,6 +42,21 @@ DECLARE
     res_sub_m        text := '';
     res_sub_y        text := '';
     res_sub_c        text := '';
+
+    -- Ledger-specific variables
+    ledger_res_cols      text := '';
+    ledger_res_sum_cols  text := '';
+    ledger_res_dr_select text := '';
+    ledger_res_cr_select text := '';
+    res_ledger_update_d  text := '';
+    res_ledger_update_m  text := '';
+    res_ledger_update_y  text := '';
+    res_ledger_update_c  text := '';
+    res_ledger_sub_d     text := '';
+    res_ledger_sub_m     text := '';
+    res_ledger_sub_y     text := '';
+    res_ledger_sub_c     text := '';
+
     -- Assembled SQL statements
     totals_upsert_d  text;
     totals_upsert_m  text;
@@ -85,7 +100,21 @@ BEGIN
             res_sub_m    := res_sub_m    || ', ';
             res_sub_y    := res_sub_y    || ', ';
             res_sub_c    := res_sub_c    || ', ';
+
+            ledger_res_cols      := ledger_res_cols || ', ';
+            ledger_res_sum_cols  := ledger_res_sum_cols || ', ';
+            ledger_res_dr_select := ledger_res_dr_select || ', ';
+            ledger_res_cr_select := ledger_res_cr_select || ', ';
+            res_ledger_update_d  := res_ledger_update_d || ', ';
+            res_ledger_update_m  := res_ledger_update_m || ', ';
+            res_ledger_update_y  := res_ledger_update_y || ', ';
+            res_ledger_update_c  := res_ledger_update_c || ', ';
+            res_ledger_sub_d     := res_ledger_sub_d || ', ';
+            res_ledger_sub_m     := res_ledger_sub_m || ', ';
+            res_ledger_sub_y     := res_ledger_sub_y || ', ';
+            res_ledger_sub_c     := res_ledger_sub_c || ', ';
         END IF;
+
         res_cols     := res_cols     || format('%I', res_key);
         res_sum_cols := res_sum_cols || format('SUM(%I) AS %I', res_key, res_key);
         -- UPSERT: add incoming value to existing
@@ -102,27 +131,97 @@ BEGIN
         res_sub_m := res_sub_m || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
         res_sub_y := res_sub_y || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
         res_sub_c := res_sub_c || format('%I = c.%I - agg.%I', res_key, res_key, res_key);
+
+        -- Ledger specific formulas
+        ledger_res_cols := ledger_res_cols || format('%I_dr, %I_cr', res_key, res_key);
+        ledger_res_sum_cols := ledger_res_sum_cols || format('SUM(%I_dr) AS %I_dr, SUM(%I_cr) AS %I_cr', res_key, res_key, res_key, res_key);
+        
+        ledger_res_dr_select := ledger_res_dr_select || format('%I AS %I_dr, 0::numeric AS %I_cr', res_key, res_key, res_key);
+        ledger_res_cr_select := ledger_res_cr_select || format('0::numeric AS %I_dr, %I AS %I_cr', res_key, res_key, res_key);
+
+        res_ledger_update_d := res_ledger_update_d || format(
+            '%I_dr = @extschema@.%I.%I_dr + EXCLUDED.%I_dr, %I_cr = @extschema@.%I.%I_cr + EXCLUDED.%I_cr',
+            res_key, p_name || '_totals_day', res_key, res_key, res_key, p_name || '_totals_day', res_key, res_key
+        );
+        res_ledger_update_m := res_ledger_update_m || format(
+            '%I_dr = @extschema@.%I.%I_dr + EXCLUDED.%I_dr, %I_cr = @extschema@.%I.%I_cr + EXCLUDED.%I_cr',
+            res_key, p_name || '_totals_month', res_key, res_key, res_key, p_name || '_totals_month', res_key, res_key
+        );
+        res_ledger_update_y := res_ledger_update_y || format(
+            '%I_dr = @extschema@.%I.%I_dr + EXCLUDED.%I_dr, %I_cr = @extschema@.%I.%I_cr + EXCLUDED.%I_cr',
+            res_key, p_name || '_totals_year', res_key, res_key, res_key, p_name || '_totals_year', res_key, res_key
+        );
+        res_ledger_update_c := res_ledger_update_c || format(
+            '%I_dr = @extschema@.%I.%I_dr + EXCLUDED.%I_dr, %I_cr = @extschema@.%I.%I_cr + EXCLUDED.%I_cr',
+            res_key, p_name || '_balance_cache', res_key, res_key, res_key, p_name || '_balance_cache', res_key, res_key
+        );
+
+        res_ledger_sub_d := res_ledger_sub_d || format(
+            '%I_dr = t.%I_dr - agg.%I_dr, %I_cr = t.%I_cr - agg.%I_cr',
+            res_key, res_key, res_key, res_key, res_key, res_key
+        );
+        res_ledger_sub_m := res_ledger_sub_m || format(
+            '%I_dr = t.%I_dr - agg.%I_dr, %I_cr = t.%I_cr - agg.%I_cr',
+            res_key, res_key, res_key, res_key, res_key, res_key
+        );
+        res_ledger_sub_y := res_ledger_sub_y || format(
+            '%I_dr = t.%I_dr - agg.%I_dr, %I_cr = t.%I_cr - agg.%I_cr',
+            res_key, res_key, res_key, res_key, res_key, res_key
+        );
+        res_ledger_sub_c := res_ledger_sub_c || format(
+            '%I_dr = c.%I_dr - agg.%I_dr, %I_cr = c.%I_cr - agg.%I_cr',
+            res_key, res_key, res_key, res_key, res_key, res_key
+        );
+
         first_res := false;
     END LOOP;
 
     -- ============================================================
     -- 1. BEFORE INSERT trigger (FOR EACH ROW): compute dim_hash
     -- ============================================================
-    EXECUTE format(
-        'CREATE OR REPLACE FUNCTION @extschema@.%I() RETURNS trigger
-         LANGUAGE plpgsql AS $trg$
-         BEGIN
-             NEW.dim_hash := @extschema@.%I(%s);
-             IF NEW.period < now() - interval ''1 day'' THEN
-                 NEW.movement_type := ''adjustment'';
-             END IF;
-             RETURN NEW;
-         END;
-         $trg$',
-        '_trg_' || p_name || '_before_insert',
-        '_hash_' || p_name,
-        hash_call_args
-    );
+    IF p_kind = 'ledger' THEN
+        DECLARE
+            hash_call_args_dr text;
+            hash_call_args_cr text;
+        BEGIN
+            hash_call_args_dr := 'NEW.subconto_dr' || CASE WHEN hash_call_args != '' THEN ', ' || hash_call_args ELSE '' END;
+            hash_call_args_cr := 'NEW.subconto_cr' || CASE WHEN hash_call_args != '' THEN ', ' || hash_call_args ELSE '' END;
+            EXECUTE format(
+                'CREATE OR REPLACE FUNCTION @extschema@.%I() RETURNS trigger
+                 LANGUAGE plpgsql AS $trg$
+                 BEGIN
+                     NEW.dim_hash_dr := @extschema@.%I(%s);
+                     NEW.dim_hash_cr := @extschema@.%I(%s);
+                     IF NEW.period < now() - interval ''1 day'' THEN
+                         NEW.movement_type := ''adjustment'';
+                     END IF;
+                     RETURN NEW;
+                 END;
+                 $trg$',
+                '_trg_' || p_name || '_before_insert',
+                '_hash_' || p_name,
+                hash_call_args_dr,
+                '_hash_' || p_name,
+                hash_call_args_cr
+            );
+        END;
+    ELSE
+        EXECUTE format(
+            'CREATE OR REPLACE FUNCTION @extschema@.%I() RETURNS trigger
+             LANGUAGE plpgsql AS $trg$
+             BEGIN
+                 NEW.dim_hash := @extschema@.%I(%s);
+                 IF NEW.period < now() - interval ''1 day'' THEN
+                     NEW.movement_type := ''adjustment'';
+                 END IF;
+                 RETURN NEW;
+             END;
+             $trg$',
+            '_trg_' || p_name || '_before_insert',
+            '_hash_' || p_name,
+            hash_call_args
+        );
+    END IF;
 
     EXECUTE format(
         'CREATE TRIGGER trg_%s_before_insert
@@ -138,84 +237,173 @@ BEGIN
     --    Uses REFERENCING NEW TABLE AS new_rows for efficient batch processing
     -- ============================================================
 
-    -- totals_day UPSERT with aggregation
-    totals_upsert_d := format(
-        'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
-         SELECT dim_hash, period::date, %s, %s
-         FROM new_rows
-         GROUP BY dim_hash, period::date, %s
-         ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
-        p_name || '_totals_day',
-        dim_cols, res_cols,
-        dim_cols, res_sum_cols,
-        dim_cols,
-        res_update_d
-    );
+    IF p_kind = 'ledger' THEN
+        -- totals_day UPSERT with aggregation
+        totals_upsert_d := format(
+            'WITH splits AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, subconto_dr AS subconto, period::date AS period, %s, %s FROM new_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, subconto_cr AS subconto, period::date AS period, %s, %s FROM new_rows
+             )
+             INSERT INTO @extschema@.%I (account, dim_hash, subconto, period, %s, %s)
+             SELECT account, dim_hash, subconto, period, %s, %s
+             FROM splits
+             GROUP BY account, dim_hash, subconto, period, %s
+             ON CONFLICT (account, dim_hash, period) DO UPDATE SET %s',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            p_name || '_totals_day',
+            dim_cols, ledger_res_cols,
+            dim_cols, ledger_res_sum_cols,
+            dim_cols,
+            res_ledger_update_d
+        );
 
-    -- totals_month UPSERT with aggregation
-    totals_upsert_m := format(
-        'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
-         SELECT dim_hash, date_trunc(''month'', period)::date, %s, %s
-         FROM new_rows
-         GROUP BY dim_hash, date_trunc(''month'', period)::date, %s
-         ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
-        p_name || '_totals_month',
-        dim_cols, res_cols,
-        dim_cols, res_sum_cols,
-        dim_cols,
-        res_update_m
-    );
+        -- totals_month UPSERT with aggregation
+        totals_upsert_m := format(
+            'WITH splits AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, subconto_dr AS subconto, date_trunc(''month'', period)::date AS period, %s, %s FROM new_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, subconto_cr AS subconto, date_trunc(''month'', period)::date AS period, %s, %s FROM new_rows
+             )
+             INSERT INTO @extschema@.%I (account, dim_hash, subconto, period, %s, %s)
+             SELECT account, dim_hash, subconto, period, %s, %s
+             FROM splits
+             GROUP BY account, dim_hash, subconto, period, %s
+             ON CONFLICT (account, dim_hash, period) DO UPDATE SET %s',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            p_name || '_totals_month',
+            dim_cols, ledger_res_cols,
+            dim_cols, ledger_res_sum_cols,
+            dim_cols,
+            res_ledger_update_m
+        );
 
-    -- totals_year UPSERT with aggregation
-    totals_upsert_y := format(
-        'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
-         SELECT dim_hash, date_trunc(''year'', period)::date, %s, %s
-         FROM new_rows
-         GROUP BY dim_hash, date_trunc(''year'', period)::date, %s
-         ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
-        p_name || '_totals_year',
-        dim_cols, res_cols,
-        dim_cols, res_sum_cols,
-        dim_cols,
-        res_update_y
-    );
+        -- totals_year UPSERT with aggregation
+        totals_upsert_y := format(
+            'WITH splits AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, subconto_dr AS subconto, date_trunc(''year'', period)::date AS period, %s, %s FROM new_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, subconto_cr AS subconto, date_trunc(''year'', period)::date AS period, %s, %s FROM new_rows
+             )
+             INSERT INTO @extschema@.%I (account, dim_hash, subconto, period, %s, %s)
+             SELECT account, dim_hash, subconto, period, %s, %s
+             FROM splits
+             GROUP BY account, dim_hash, subconto, period, %s
+             ON CONFLICT (account, dim_hash, period) DO UPDATE SET %s',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            p_name || '_totals_year',
+            dim_cols, ledger_res_cols,
+            dim_cols, ledger_res_sum_cols,
+            dim_cols,
+            res_ledger_update_y
+        );
 
-    -- balance_cache UPSERT (only for balance kind)
-    IF p_kind = 'balance' THEN
-        IF NOT p_high_write THEN
-            cache_upsert := format(
-                'INSERT INTO @extschema@.%I (dim_hash, %s, %s, last_movement_at, last_movement_id, version)
-                 SELECT dim_hash, %s, %s, now(), (array_agg(id))[1], 1
-                 FROM new_rows
-                 GROUP BY dim_hash, %s
-                 ON CONFLICT (dim_hash) DO UPDATE SET %s,
-                     last_movement_at = EXCLUDED.last_movement_at,
-                     last_movement_id = EXCLUDED.last_movement_id,
-                     version = @extschema@.%I.version + 1',
-                p_name || '_balance_cache',
-                dim_cols, res_cols,
-                dim_cols, res_sum_cols,
-                dim_cols,
-                res_update_c,
-                p_name || '_balance_cache'
-            );
-        ELSE
-            -- High-write: seed balance_cache rows (zeroed resources) then append to delta buffer
-            cache_upsert := format(
-                'INSERT INTO @extschema@.%I (dim_hash, %s, last_movement_at, last_movement_id, version)
-                 SELECT DISTINCT ON (dim_hash) dim_hash, %s, now(), id, 0
-                 FROM new_rows
-                 ON CONFLICT (dim_hash) DO NOTHING;
-                 INSERT INTO @extschema@.%I (dim_hash, %s)
-                 SELECT dim_hash, %s
-                 FROM new_rows',
-                p_name || '_balance_cache',
-                dim_cols,
-                dim_cols,
-                p_name || '_balance_cache_delta',
-                res_cols,
-                res_cols
-            );
+        -- balance_cache UPSERT
+        cache_upsert := format(
+            'WITH splits AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, subconto_dr AS subconto, %s, %s FROM new_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, subconto_cr AS subconto, %s, %s FROM new_rows
+             )
+             INSERT INTO @extschema@.%I (account, dim_hash, subconto, %s, %s, last_movement_at, last_movement_id, version)
+             SELECT account, dim_hash, subconto, %s, %s, now(), NULL, 1
+             FROM splits
+             GROUP BY account, dim_hash, subconto, %s
+             ON CONFLICT (account, dim_hash) DO UPDATE SET %s,
+                 last_movement_at = EXCLUDED.last_movement_at,
+                 version = @extschema@.%I.version + 1',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            p_name || '_balance_cache',
+            dim_cols, ledger_res_cols,
+            dim_cols, ledger_res_sum_cols,
+            dim_cols,
+            res_ledger_update_c,
+            p_name || '_balance_cache'
+        );
+    ELSE
+        -- totals_day UPSERT with aggregation (standard)
+        totals_upsert_d := format(
+            'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
+             SELECT dim_hash, period::date, %s, %s
+             FROM new_rows
+             GROUP BY dim_hash, period::date, %s
+             ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
+            p_name || '_totals_day',
+            dim_cols, res_cols,
+            dim_cols, res_sum_cols,
+            dim_cols,
+            res_update_d
+        );
+
+        -- totals_month UPSERT with aggregation (standard)
+        totals_upsert_m := format(
+            'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
+             SELECT dim_hash, date_trunc(''month'', period)::date, %s, %s
+             FROM new_rows
+             GROUP BY dim_hash, date_trunc(''month'', period)::date, %s
+             ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
+            p_name || '_totals_month',
+            dim_cols, res_cols,
+            dim_cols, res_sum_cols,
+            dim_cols,
+            res_update_m
+        );
+
+        -- totals_year UPSERT with aggregation (standard)
+        totals_upsert_y := format(
+            'INSERT INTO @extschema@.%I (dim_hash, period, %s, %s)
+             SELECT dim_hash, date_trunc(''year'', period)::date, %s, %s
+             FROM new_rows
+             GROUP BY dim_hash, date_trunc(''year'', period)::date, %s
+             ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
+            p_name || '_totals_year',
+            dim_cols, res_cols,
+            dim_cols, res_sum_cols,
+            dim_cols,
+            res_update_y
+        );
+
+        -- balance_cache UPSERT (only for balance kind)
+        IF p_kind = 'balance' THEN
+            IF NOT p_high_write THEN
+                cache_upsert := format(
+                    'INSERT INTO @extschema@.%I (dim_hash, %s, %s, last_movement_at, last_movement_id, version)
+                     SELECT dim_hash, %s, %s, now(), (array_agg(id))[1], 1
+                     FROM new_rows
+                     GROUP BY dim_hash, %s
+                     ON CONFLICT (dim_hash) DO UPDATE SET %s,
+                         last_movement_at = EXCLUDED.last_movement_at,
+                         last_movement_id = EXCLUDED.last_movement_id,
+                         version = @extschema@.%I.version + 1',
+                    p_name || '_balance_cache',
+                    dim_cols, res_cols,
+                    dim_cols, res_sum_cols,
+                    dim_cols,
+                    res_update_c,
+                    p_name || '_balance_cache'
+                );
+            ELSE
+                -- High-write: seed balance_cache rows (zeroed resources) then append to delta buffer
+                cache_upsert := format(
+                    'INSERT INTO @extschema@.%I (dim_hash, %s, last_movement_at, last_movement_id, version)
+                     SELECT DISTINCT ON (dim_hash) dim_hash, %s, now(), id, 0
+                     FROM new_rows
+                     ON CONFLICT (dim_hash) DO NOTHING;
+                     INSERT INTO @extschema@.%I (dim_hash, %s)
+                     SELECT dim_hash, %s
+                     FROM new_rows',
+                    p_name || '_balance_cache',
+                    dim_cols,
+                    dim_cols,
+                    p_name || '_balance_cache_delta',
+                    res_cols,
+                    res_cols
+                );
+            END IF;
         END IF;
     END IF;
 
@@ -252,37 +440,127 @@ BEGIN
     --    Uses REFERENCING OLD TABLE AS old_rows
     -- ============================================================
 
-    -- Subtract aggregated resources from totals_day
-    del_totals_d := format(
-        'UPDATE @extschema@.%I t SET %s
-         FROM (SELECT dim_hash, period::date AS period, %s
-               FROM old_rows GROUP BY dim_hash, period::date) agg
-         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
-        p_name || '_totals_day', res_sub_d, res_sum_cols);
+    IF p_kind = 'ledger' THEN
+        -- Subtract aggregated resources from totals_day
+        del_totals_d := format(
+            'WITH splits_old AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, period::date AS period, %s, %s FROM old_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, period::date AS period, %s, %s FROM old_rows
+             ),
+             agg AS (
+                 SELECT account, dim_hash, period, %s
+                 FROM splits_old
+                 GROUP BY account, dim_hash, period
+             )
+             UPDATE @extschema@.%I t SET %s
+             FROM agg
+             WHERE t.account = agg.account AND t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            ledger_res_sum_cols,
+            p_name || '_totals_day',
+            res_ledger_sub_d
+        );
 
-    -- Subtract aggregated resources from totals_month
-    del_totals_m := format(
-        'UPDATE @extschema@.%I t SET %s
-         FROM (SELECT dim_hash, date_trunc(''month'', period)::date AS period, %s
-               FROM old_rows GROUP BY dim_hash, date_trunc(''month'', period)::date) agg
-         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
-        p_name || '_totals_month', res_sub_m, res_sum_cols);
+        -- Subtract aggregated resources from totals_month
+        del_totals_m := format(
+            'WITH splits_old AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, date_trunc(''month'', period)::date AS period, %s, %s FROM old_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, date_trunc(''month'', period)::date AS period, %s, %s FROM old_rows
+             ),
+             agg AS (
+                 SELECT account, dim_hash, period, %s
+                 FROM splits_old
+                 GROUP BY account, dim_hash, period
+             )
+             UPDATE @extschema@.%I t SET %s
+             FROM agg
+             WHERE t.account = agg.account AND t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            ledger_res_sum_cols,
+            p_name || '_totals_month',
+            res_ledger_sub_m
+        );
 
-    -- Subtract aggregated resources from totals_year
-    del_totals_y := format(
-        'UPDATE @extschema@.%I t SET %s
-         FROM (SELECT dim_hash, date_trunc(''year'', period)::date AS period, %s
-               FROM old_rows GROUP BY dim_hash, date_trunc(''year'', period)::date) agg
-         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
-        p_name || '_totals_year', res_sub_y, res_sum_cols);
+        -- Subtract aggregated resources from totals_year
+        del_totals_y := format(
+            'WITH splits_old AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, date_trunc(''year'', period)::date AS period, %s, %s FROM old_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, date_trunc(''year'', period)::date AS period, %s, %s FROM old_rows
+             ),
+             agg AS (
+                 SELECT account, dim_hash, period, %s
+                 FROM splits_old
+                 GROUP BY account, dim_hash, period
+             )
+             UPDATE @extschema@.%I t SET %s
+             FROM agg
+             WHERE t.account = agg.account AND t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            ledger_res_sum_cols,
+            p_name || '_totals_year',
+            res_ledger_sub_y
+        );
 
-    -- Subtract aggregated resources from balance_cache
-    IF p_kind = 'balance' THEN
+        -- Subtract aggregated resources from balance_cache
         del_cache := format(
-            'UPDATE @extschema@.%I c SET %s, version = c.version + 1
-             FROM (SELECT dim_hash, %s FROM old_rows GROUP BY dim_hash) agg
-             WHERE c.dim_hash = agg.dim_hash',
-            p_name || '_balance_cache', res_sub_c, res_sum_cols);
+            'WITH splits_old AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, %s, %s FROM old_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, %s, %s FROM old_rows
+             ),
+             agg AS (
+                 SELECT account, dim_hash, %s
+                 FROM splits_old
+                 GROUP BY account, dim_hash
+             )
+             UPDATE @extschema@.%I c SET %s, version = c.version + 1
+             FROM agg
+             WHERE c.account = agg.account AND c.dim_hash = agg.dim_hash',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            ledger_res_sum_cols,
+            p_name || '_balance_cache',
+            res_ledger_sub_c
+        );
+    ELSE
+        -- Subtract aggregated resources from totals_day (standard)
+        del_totals_d := format(
+            'UPDATE @extschema@.%I t SET %s
+             FROM (SELECT dim_hash, period::date AS period, %s
+                   FROM old_rows GROUP BY dim_hash, period::date) agg
+             WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            p_name || '_totals_day', res_sub_d, res_sum_cols);
+
+        -- Subtract aggregated resources from totals_month (standard)
+        del_totals_m := format(
+            'UPDATE @extschema@.%I t SET %s
+             FROM (SELECT dim_hash, date_trunc(''month'', period)::date AS period, %s
+                   FROM old_rows GROUP BY dim_hash, date_trunc(''month'', period)::date) agg
+             WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            p_name || '_totals_month', res_sub_m, res_sum_cols);
+
+        -- Subtract aggregated resources from totals_year (standard)
+        del_totals_y := format(
+            'UPDATE @extschema@.%I t SET %s
+             FROM (SELECT dim_hash, date_trunc(''year'', period)::date AS period, %s
+                   FROM old_rows GROUP BY dim_hash, date_trunc(''year'', period)::date) agg
+             WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            p_name || '_totals_year', res_sub_y, res_sum_cols);
+
+        -- Subtract aggregated resources from balance_cache (standard)
+        IF p_kind = 'balance' THEN
+            del_cache := format(
+                'UPDATE @extschema@.%I c SET %s, version = c.version + 1
+                 FROM (SELECT dim_hash, %s FROM old_rows GROUP BY dim_hash) agg
+                 WHERE c.dim_hash = agg.dim_hash',
+                p_name || '_balance_cache', res_sub_c, res_sum_cols);
+        END IF;
     END IF;
 
     EXECUTE format(
@@ -391,7 +669,7 @@ BEGIN
     );
 
     -- Protect balance_cache (if applicable)
-    IF p_kind = 'balance' THEN
+    IF p_kind = 'balance' OR p_kind = 'ledger' THEN
         EXECUTE format(
             'CREATE TRIGGER trg_%s_protect_balance_cache
              BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.%I

@@ -8,7 +8,7 @@
 CREATE TABLE IF NOT EXISTS @extschema@._registers (
     name           text PRIMARY KEY,
     kind           text NOT NULL DEFAULT 'balance'
-                       CHECK (kind IN ('balance', 'turnover')),
+                       CHECK (kind IN ('balance', 'turnover', 'ledger')),
     dimensions     jsonb NOT NULL,
     resources      jsonb NOT NULL,
     totals_period  text NOT NULL DEFAULT 'day'

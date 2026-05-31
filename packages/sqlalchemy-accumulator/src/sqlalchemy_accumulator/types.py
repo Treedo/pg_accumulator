@@ -20,7 +20,7 @@ PgColumnType = Literal[
     "uuid",
 ]
 
-RegisterKind = Literal["balance", "turnover"]
+RegisterKind = Literal["balance", "turnover", "ledger"]
 TotalsPeriod = Literal["day", "month", "year"]
 PartitionBy = Literal["day", "month", "quarter", "year"]
 RecorderType = Literal["text", "int", "bigint", "uuid"]

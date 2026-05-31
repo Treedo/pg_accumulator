@@ -2,7 +2,7 @@ import type { MapPgFields, DimensionFilter, ResourceResult } from './pg-types';
 export type { ResourceResult } from './pg-types';
 
 /** Register kind */
-export type RegisterKind = 'balance' | 'turnover';
+export type RegisterKind = 'balance' | 'turnover' | 'ledger';
 
 /** Totals aggregation period */
 export type TotalsPeriod = 'day' | 'month' | 'year';
@@ -43,6 +43,11 @@ export type MovementInput<
 > = {
   recorder: string;
   period: string | Date;
+  account_dr?: string;
+  account_cr?: string;
+  subconto_dr?: Record<string, any>;
+  subconto_cr?: Record<string, any>;
+  amount?: number;
 } & MapPgFields<D> & Partial<MapPgFields<R>>;
 
 /** Balance query options */
@@ -80,7 +85,12 @@ export type MovementRow<
   period: string;
   movement_type: string;
   dim_hash: string;
-} & MapPgFields<D> & ResourceResult<R>;
+  account_dr?: string;
+  account_cr?: string;
+  subconto_dr?: Record<string, any>;
+  subconto_cr?: Record<string, any>;
+  amount?: number;
+} & MapPgFields<D> & ResourceResult<R> & Record<string, any>;
 
 /** Register info returned by register_info() */
 export interface RegisterInfo {

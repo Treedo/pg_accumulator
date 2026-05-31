@@ -259,7 +259,7 @@ pgacc_do_stats_collection(void)
 			 "  LOOP "
 			 "    BEGIN "
 			 "      st := %s.register_stats(reg.name); "
-			 "      RAISE DEBUG1 'pg_accumulator stats [%%]: %%', reg.name, st; "
+			 "      RAISE DEBUG 'pg_accumulator stats [%%]: %%', reg.name, st; "
 			 "    EXCEPTION WHEN OTHERS THEN "
 			 "      RAISE WARNING 'pg_accumulator stats [%%]: error — %%', "
 			 "        reg.name, SQLERRM; "

@@ -60,3 +60,66 @@ SELECT accum.register_post('finance', '{
     "recorder": "expense:007", "period": "2026-04-18",
     "account": 3, "category": 5, "amount": -1500
 }');
+
+-- Compatibility View for Demo application
+CREATE OR REPLACE VIEW accum.registers AS
+SELECT name, kind, dimensions, resources, totals_period, partition_by, high_write, created_at, updated_at
+FROM accum._registers;
+
+-- Create a ledger register for general ledger bookkeeping
+SELECT accum.register_create(
+    name          := 'general_ledger',
+    dimensions    := '{"currency": "text"}',
+    resources     := '{"amount": "numeric(18,2)"}',
+    kind          := 'ledger',
+    totals_period := 'day'
+);
+
+-- Seed Ledger postings:
+-- 1. Initial capital input (Active debit cash 10, Passive credit capital 40)
+SELECT accum.register_post('general_ledger', '{
+    "recorder": "capital:1",
+    "period":   "2026-04-01",
+    "currency": "USD",
+    "account_dr": "10",
+    "subconto_dr": {"bank": "Головний банк"},
+    "account_cr": "40",
+    "subconto_cr": {"owner": "Засновник"},
+    "amount": 100000.00
+}');
+
+-- 2. Buy raw materials / goods (Active debit inventory 28, Active credit cash 10)
+SELECT accum.register_post('general_ledger', '{
+    "recorder": "purchase:1",
+    "period":   "2026-04-02",
+    "currency": "USD",
+    "account_dr": "28",
+    "subconto_dr": {"item_id": 1, "supplier": "Оптовий постачальник"},
+    "account_cr": "10",
+    "subconto_cr": {"bank": "Головний банк"},
+    "amount": 30000.00
+}');
+
+-- 3. Office Rent payment (Active debit rent expense 90, Active credit cash 10)
+SELECT accum.register_post('general_ledger', '{
+    "recorder": "rent:1",
+    "period":   "2026-04-05",
+    "currency": "USD",
+    "account_dr": "90",
+    "subconto_dr": {"purpose": "Оренда офісу за Квітень"},
+    "account_cr": "10",
+    "subconto_cr": {"bank": "Головний банк"},
+    "amount": 2000.00
+}');
+
+-- 4. Get short term bank loan (Active debit cash 10, Passive credit loan 50)
+SELECT accum.register_post('general_ledger', '{
+    "recorder": "loan:1",
+    "period":   "2026-04-06",
+    "currency": "USD",
+    "account_dr": "10",
+    "subconto_dr": {"bank": "Головний банк"},
+    "account_cr": "50",
+    "subconto_cr": {"lender": "Альфа Банк"},
+    "amount": 50000.00
+}');

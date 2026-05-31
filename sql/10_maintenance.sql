@@ -260,6 +260,55 @@ COMMENT ON FUNCTION @extschema@.register_verify(text) IS
 
 
 -- ============================================================
+-- REGISTER_LEDGER_VERIFY: Verify double-entry ledger soundness
+-- Checks if Debit total equals Credit total for all resources
+--
+-- Returns: boolean (true if all resource debit/credit balances are equal)
+-- ============================================================
+CREATE OR REPLACE FUNCTION @extschema@.register_ledger_verify(p_name text)
+RETURNS boolean
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    reg          record;
+    res_key      text;
+    v_sql        text;
+    v_dr_total   numeric;
+    v_cr_total   numeric;
+    v_sound      boolean := true;
+BEGIN
+    SELECT * INTO reg FROM @extschema@._registers r WHERE r.name = p_name;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Register "%" does not exist', p_name;
+    END IF;
+
+    IF reg.kind <> 'ledger' THEN
+        RAISE EXCEPTION 'Register "%" is not of kind "ledger"', p_name;
+    END IF;
+
+    FOR res_key IN SELECT key FROM jsonb_each_text(reg.resources) ORDER BY key
+    LOOP
+        v_sql := format(
+            'SELECT COALESCE(SUM(%I), 0), COALESCE(SUM(%I), 0) FROM @extschema@.%I',
+            res_key || '_dr',
+            res_key || '_cr',
+            p_name || '_balance_cache'
+        );
+        EXECUTE v_sql INTO v_dr_total, v_cr_total;
+
+        IF v_dr_total <> v_cr_total THEN
+            v_sound := false;
+        END IF;
+    END LOOP;
+
+    RETURN v_sound;
+END;
+$$;
+
+COMMENT ON FUNCTION @extschema@.register_ledger_verify(text) IS
+    'Verify double-entry soundness for a ledger register: checks that total debits match total credits for all resource fields';
+
+
+-- ============================================================
 -- REGISTER_REBUILD_TOTALS: Full rebuild of totals from movements
 -- Truncates and re-aggregates totals_day, totals_month and totals_year.
 --
