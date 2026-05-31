@@ -41,6 +41,10 @@ BEGIN
     END IF;
 
     -- 3. Build column list from register metadata (deterministic order)
+    IF reg.kind = 'ledger' THEN
+        col_list := col_list || ', account_dr, subconto_dr, account_cr, subconto_cr';
+    END IF;
+
     FOR dim_key IN SELECT key FROM jsonb_each_text(reg.dimensions) ORDER BY key
     LOOP
         col_list := col_list || ', ' || quote_ident(dim_key);
@@ -63,6 +67,21 @@ BEGIN
         END IF;
 
         tuple := format('%L, %L::timestamptz', mov->>'recorder', mov->>'period');
+
+        IF reg.kind = 'ledger' THEN
+            IF mov->>'account_dr' IS NULL THEN
+                RAISE EXCEPTION 'account_dr is required for ledger registers';
+            END IF;
+            IF mov->>'account_cr' IS NULL THEN
+                RAISE EXCEPTION 'account_cr is required for ledger registers';
+            END IF;
+            tuple := tuple || ', ' || format('%L, %L::jsonb, %L, %L::jsonb', 
+                mov->>'account_dr', 
+                coalesce(mov->>'subconto_dr', '{}'), 
+                mov->>'account_cr', 
+                coalesce(mov->>'subconto_cr', '{}')
+            );
+        END IF;
 
         -- Dimensions: all required
         FOR dim_key, dim_type IN SELECT key, value FROM jsonb_each_text(reg.dimensions) ORDER BY key

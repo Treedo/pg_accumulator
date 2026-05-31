@@ -51,10 +51,19 @@ DECLARE
     hash_args text := '';
     hash_body text := '';
     arg_idx   int  := 0;
+    v_kind    text;
 BEGIN
     -- Validate inputs
     PERFORM @extschema@._validate_name(p_name);
     PERFORM @extschema@._validate_dimensions(p_dimensions);
+
+    SELECT kind INTO v_kind FROM @extschema@._registers WHERE name = p_name;
+
+    IF v_kind = 'ledger' THEN
+        hash_args := 'p_subconto jsonb';
+        hash_body := 'coalesce(p_subconto::text, ''{}'')';
+        arg_idx := 1;
+    END IF;
 
     -- Build function signature and body
     FOR dim_key, dim_type IN SELECT * FROM jsonb_each_text(p_dimensions) ORDER BY key

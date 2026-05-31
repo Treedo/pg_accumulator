@@ -39,6 +39,27 @@ BEGIN
 END;
 $$;
 
+-- ============================================================
+-- HELPER: Build ledger resource column SQL fragment with _dr and _cr
+-- Returns comma-prefixed text: ", amount_dr numeric NOT NULL DEFAULT 0, amount_cr numeric NOT NULL DEFAULT 0"
+-- ============================================================
+CREATE OR REPLACE FUNCTION accum._build_ledger_res_columns(p_resources jsonb)
+RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+    res_key  text;
+    res_type text;
+    result   text := '';
+BEGIN
+    FOR res_key, res_type IN SELECT key, value FROM jsonb_each_text(p_resources) ORDER BY key
+    LOOP
+        result := result || format(', %I_dr %s NOT NULL DEFAULT 0', res_key, res_type);
+        result := result || format(', %I_cr %s NOT NULL DEFAULT 0', res_key, res_type);
+    END LOOP;
+    RETURN result;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION accum._ddl_create_movements_table(
     p_name          text,
     p_recorder_type text,
@@ -49,27 +70,55 @@ LANGUAGE plpgsql AS $$
 DECLARE
     col_defs text;
     res_defs text;
+    v_kind   text;
 BEGIN
+    SELECT kind INTO v_kind FROM accum._registers WHERE name = p_name;
     col_defs := accum._build_dim_columns(p_dimensions);
-    res_defs := accum._build_res_columns(p_resources);
 
-    EXECUTE format(
-        'CREATE TABLE accum.%I (
-            id             uuid          DEFAULT gen_random_uuid(),
-            recorded_at    timestamptz   DEFAULT now() NOT NULL,
-            recorder       %s            NOT NULL,
-            period         timestamptz   NOT NULL,
-            movement_type  text          DEFAULT ''regular'' NOT NULL,
-            dim_hash       bigint        NOT NULL
-            %s
-            %s,
-            PRIMARY KEY (id, period)
-        ) PARTITION BY RANGE (period)',
-        p_name || '_movements',
-        p_recorder_type,
-        col_defs,
-        res_defs
-    );
+    IF v_kind = 'ledger' THEN
+        res_defs := accum._build_res_columns(p_resources);
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                id             uuid          DEFAULT gen_random_uuid(),
+                recorded_at    timestamptz   DEFAULT now() NOT NULL,
+                recorder       %s            NOT NULL,
+                period         timestamptz   NOT NULL,
+                movement_type  text          DEFAULT ''regular'' NOT NULL,
+                account_dr     text          NOT NULL,
+                subconto_dr    jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                account_cr     text          NOT NULL,
+                subconto_cr    jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                dim_hash_dr    bigint        NOT NULL,
+                dim_hash_cr    bigint        NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (id, period)
+            ) PARTITION BY RANGE (period)',
+            p_name || '_movements',
+            p_recorder_type,
+            col_defs,
+            res_defs
+        );
+    ELSE
+        res_defs := accum._build_res_columns(p_resources);
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                id             uuid          DEFAULT gen_random_uuid(),
+                recorded_at    timestamptz   DEFAULT now() NOT NULL,
+                recorder       %s            NOT NULL,
+                period         timestamptz   NOT NULL,
+                movement_type  text          DEFAULT ''regular'' NOT NULL,
+                dim_hash       bigint        NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (id, period)
+            ) PARTITION BY RANGE (period)',
+            p_name || '_movements',
+            p_recorder_type,
+            col_defs,
+            res_defs
+        );
+    END IF;
 
     EXECUTE format(
         'CREATE TABLE accum.%I PARTITION OF accum.%I DEFAULT',
@@ -88,48 +137,102 @@ LANGUAGE plpgsql AS $$
 DECLARE
     col_defs text;
     res_defs text;
+    v_kind   text;
 BEGIN
+    SELECT kind INTO v_kind FROM accum._registers WHERE name = p_name;
     col_defs := accum._build_dim_columns(p_dimensions);
-    res_defs := accum._build_res_columns(p_resources);
 
-    EXECUTE format(
-        'CREATE TABLE accum.%I (
-            dim_hash       bigint        NOT NULL,
-            period         date          NOT NULL
-            %s
-            %s,
-            PRIMARY KEY (dim_hash, period)
-        )',
-        p_name || '_totals_day',
-        col_defs,
-        res_defs
-    );
+    IF v_kind = 'ledger' THEN
+        res_defs := accum._build_ledger_res_columns(p_resources);
+        -- totals_day: daily turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                account        text          NOT NULL,
+                dim_hash       bigint        NOT NULL,
+                subconto       jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (account, dim_hash, period)
+            )',
+            p_name || '_totals_day',
+            col_defs,
+            res_defs
+        );
 
-    EXECUTE format(
-        'CREATE TABLE accum.%I (
-            dim_hash       bigint        NOT NULL,
-            period         date          NOT NULL
-            %s
-            %s,
-            PRIMARY KEY (dim_hash, period)
-        )',
-        p_name || '_totals_month',
-        col_defs,
-        res_defs
-    );
+        -- totals_month: monthly turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                account        text          NOT NULL,
+                dim_hash       bigint        NOT NULL,
+                subconto       jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (account, dim_hash, period)
+            )',
+            p_name || '_totals_month',
+            col_defs,
+            res_defs
+        );
 
-    EXECUTE format(
-        'CREATE TABLE accum.%I (
-            dim_hash       bigint        NOT NULL,
-            period         date          NOT NULL
-            %s
-            %s,
-            PRIMARY KEY (dim_hash, period)
-        )',
-        p_name || '_totals_year',
-        col_defs,
-        res_defs
-    );
+        -- totals_year: yearly turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                account        text          NOT NULL,
+                dim_hash       bigint        NOT NULL,
+                subconto       jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (account, dim_hash, period)
+            )',
+            p_name || '_totals_year',
+            col_defs,
+            res_defs
+        );
+    ELSE
+        res_defs := accum._build_res_columns(p_resources);
+
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                dim_hash       bigint        NOT NULL,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (dim_hash, period)
+            )',
+            p_name || '_totals_day',
+            col_defs,
+            res_defs
+        );
+
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                dim_hash       bigint        NOT NULL,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (dim_hash, period)
+            )',
+            p_name || '_totals_month',
+            col_defs,
+            res_defs
+        );
+
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                dim_hash       bigint        NOT NULL,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (dim_hash, period)
+            )',
+            p_name || '_totals_year',
+            col_defs,
+            res_defs
+        );
+    END IF;
 END;
 $$;
 
@@ -142,23 +245,45 @@ LANGUAGE plpgsql AS $$
 DECLARE
     col_defs text;
     res_defs text;
+    v_kind   text;
 BEGIN
+    SELECT kind INTO v_kind FROM accum._registers WHERE name = p_name;
     col_defs := accum._build_dim_columns(p_dimensions);
-    res_defs := accum._build_res_columns(p_resources);
 
-    EXECUTE format(
-        'CREATE TABLE accum.%I (
-            dim_hash         bigint          NOT NULL PRIMARY KEY
-            %s
-            %s,
-            last_movement_at timestamptz     NOT NULL DEFAULT now(),
-            last_movement_id uuid,
-            version          bigint          NOT NULL DEFAULT 0
-        ) WITH (fillfactor = 70)',
-        p_name || '_balance_cache',
-        col_defs,
-        res_defs
-    );
+    IF v_kind = 'ledger' THEN
+        res_defs := accum._build_ledger_res_columns(p_resources);
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                account          text            NOT NULL,
+                dim_hash         bigint          NOT NULL,
+                subconto         jsonb           NOT NULL DEFAULT ''{}''::jsonb
+                %s
+                %s,
+                last_movement_at timestamptz     NOT NULL DEFAULT now(),
+                last_movement_id uuid,
+                version          bigint          NOT NULL DEFAULT 0,
+                PRIMARY KEY (account, dim_hash)
+            ) WITH (fillfactor = 70)',
+            p_name || '_balance_cache',
+            col_defs,
+            res_defs
+        );
+    ELSE
+        res_defs := accum._build_res_columns(p_resources);
+        EXECUTE format(
+            'CREATE TABLE accum.%I (
+                dim_hash         bigint          NOT NULL PRIMARY KEY
+                %s
+                %s,
+                last_movement_at timestamptz     NOT NULL DEFAULT now(),
+                last_movement_id uuid,
+                version          bigint          NOT NULL DEFAULT 0
+            ) WITH (fillfactor = 70)',
+            p_name || '_balance_cache',
+            col_defs,
+            res_defs
+        );
+    END IF;
 END;
 $$;
 
@@ -195,12 +320,22 @@ LANGUAGE plpgsql AS $$
 DECLARE
     dim_key text;
 BEGIN
-    EXECUTE format('CREATE INDEX ON accum.%I (dim_hash, period)', p_name || '_movements');
-    EXECUTE format('CREATE INDEX ON accum.%I (recorder)', p_name || '_movements');
-    EXECUTE format('CREATE INDEX ON accum.%I (period)', p_name || '_movements');
-    EXECUTE format('CREATE INDEX ON accum.%I (movement_type) WHERE movement_type != ''regular''', p_name || '_movements');
+    IF p_kind = 'ledger' THEN
+        EXECUTE format('CREATE INDEX ON accum.%I (dim_hash_dr, period)', p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON accum.%I (dim_hash_cr, period)', p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON accum.%I (account_dr)', p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON accum.%I (account_cr)', p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON accum.%I (recorder)', p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON accum.%I (period)', p_name || '_movements');
+    ELSE
+        EXECUTE format('CREATE INDEX ON accum.%I (dim_hash, period)', p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON accum.%I (recorder)', p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON accum.%I (period)', p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON accum.%I (movement_type) WHERE movement_type != ''regular''', p_name || '_movements');
+    END IF;
 
-    IF p_kind = 'balance' THEN
+    -- Dimension indexes
+    IF p_kind = 'balance' OR p_kind = 'ledger' THEN
         FOR dim_key IN SELECT key FROM jsonb_each_text(p_dimensions) ORDER BY key
         LOOP
             EXECUTE format('CREATE INDEX ON accum.%I (%I)',
@@ -259,18 +394,37 @@ LANGUAGE plpgsql AS $$
 DECLARE
     dim_key          text;
     res_key          text;
+    -- Column reference fragments
     hash_call_args   text := '';
     dim_cols         text := '';
     res_cols         text := '';
     res_sum_cols     text := '';
+    -- UPSERT SET clauses for INSERT triggers
     res_update_d     text := '';
     res_update_m     text := '';
     res_update_y     text := '';
     res_update_c     text := '';
+    -- UPDATE SET clauses for DELETE triggers
     res_sub_d        text := '';
     res_sub_m        text := '';
     res_sub_y        text := '';
     res_sub_c        text := '';
+
+    -- Ledger-specific variables
+    ledger_res_cols      text := '';
+    ledger_res_sum_cols  text := '';
+    ledger_res_dr_select text := '';
+    ledger_res_cr_select text := '';
+    res_ledger_update_d  text := '';
+    res_ledger_update_m  text := '';
+    res_ledger_update_y  text := '';
+    res_ledger_update_c  text := '';
+    res_ledger_sub_d     text := '';
+    res_ledger_sub_m     text := '';
+    res_ledger_sub_y     text := '';
+    res_ledger_sub_c     text := '';
+
+    -- Assembled SQL statements
     totals_upsert_d  text;
     totals_upsert_m  text;
     totals_upsert_y  text;
@@ -283,7 +437,9 @@ DECLARE
     first_dim        boolean := true;
     first_res        boolean := true;
 BEGIN
-    -- Build dimension column lists (ORDER BY key for determinism)
+    -- --------------------------------------------------------
+    -- Build dimension column references (ORDER BY key for determinism)
+    -- --------------------------------------------------------
     FOR dim_key IN SELECT key FROM jsonb_each_text(p_dimensions) ORDER BY key
     LOOP
         IF NOT first_dim THEN
@@ -295,7 +451,9 @@ BEGIN
         first_dim := false;
     END LOOP;
 
-    -- Build resource column lists (ORDER BY key for determinism)
+    -- --------------------------------------------------------
+    -- Build resource column references + update clauses (ORDER BY key)
+    -- --------------------------------------------------------
     FOR res_key IN SELECT key FROM jsonb_each_text(p_resources) ORDER BY key
     LOOP
         IF NOT first_res THEN
@@ -309,9 +467,24 @@ BEGIN
             res_sub_m    := res_sub_m    || ', ';
             res_sub_y    := res_sub_y    || ', ';
             res_sub_c    := res_sub_c    || ', ';
+
+            ledger_res_cols      := ledger_res_cols || ', ';
+            ledger_res_sum_cols  := ledger_res_sum_cols || ', ';
+            ledger_res_dr_select := ledger_res_dr_select || ', ';
+            ledger_res_cr_select := ledger_res_cr_select || ', ';
+            res_ledger_update_d  := res_ledger_update_d || ', ';
+            res_ledger_update_m  := res_ledger_update_m || ', ';
+            res_ledger_update_y  := res_ledger_update_y || ', ';
+            res_ledger_update_c  := res_ledger_update_c || ', ';
+            res_ledger_sub_d     := res_ledger_sub_d || ', ';
+            res_ledger_sub_m     := res_ledger_sub_m || ', ';
+            res_ledger_sub_y     := res_ledger_sub_y || ', ';
+            res_ledger_sub_c     := res_ledger_sub_c || ', ';
         END IF;
+
         res_cols     := res_cols     || format('%I', res_key);
         res_sum_cols := res_sum_cols || format('SUM(%I) AS %I', res_key, res_key);
+        -- UPSERT: add incoming value to existing
         res_update_d := res_update_d || format('%I = accum.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_totals_day', res_key, res_key);
         res_update_m := res_update_m || format('%I = accum.%I.%I + EXCLUDED.%I',
@@ -320,31 +493,102 @@ BEGIN
             res_key, p_name || '_totals_year', res_key, res_key);
         res_update_c := res_update_c || format('%I = accum.%I.%I + EXCLUDED.%I',
             res_key, p_name || '_balance_cache', res_key, res_key);
-        res_sub_d    := res_sub_d || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
-        res_sub_m    := res_sub_m || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
-        res_sub_y    := res_sub_y || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
-        res_sub_c    := res_sub_c || format('%I = c.%I - agg.%I', res_key, res_key, res_key);
+        -- DELETE: subtract aggregated value
+        res_sub_d := res_sub_d || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
+        res_sub_m := res_sub_m || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
+        res_sub_y := res_sub_y || format('%I = t.%I - agg.%I', res_key, res_key, res_key);
+        res_sub_c := res_sub_c || format('%I = c.%I - agg.%I', res_key, res_key, res_key);
+
+        -- Ledger specific formulas
+        ledger_res_cols := ledger_res_cols || format('%I_dr, %I_cr', res_key, res_key);
+        ledger_res_sum_cols := ledger_res_sum_cols || format('SUM(%I_dr) AS %I_dr, SUM(%I_cr) AS %I_cr', res_key, res_key, res_key, res_key);
+        
+        ledger_res_dr_select := ledger_res_dr_select || format('%I AS %I_dr, 0::numeric AS %I_cr', res_key, res_key, res_key);
+        ledger_res_cr_select := ledger_res_cr_select || format('0::numeric AS %I_dr, %I AS %I_cr', res_key, res_key, res_key);
+
+        res_ledger_update_d := res_ledger_update_d || format(
+            '%I_dr = accum.%I.%I_dr + EXCLUDED.%I_dr, %I_cr = accum.%I.%I_cr + EXCLUDED.%I_cr',
+            res_key, p_name || '_totals_day', res_key, res_key, res_key, p_name || '_totals_day', res_key, res_key
+        );
+        res_ledger_update_m := res_ledger_update_m || format(
+            '%I_dr = accum.%I.%I_dr + EXCLUDED.%I_dr, %I_cr = accum.%I.%I_cr + EXCLUDED.%I_cr',
+            res_key, p_name || '_totals_month', res_key, res_key, res_key, p_name || '_totals_month', res_key, res_key
+        );
+        res_ledger_update_y := res_ledger_update_y || format(
+            '%I_dr = accum.%I.%I_dr + EXCLUDED.%I_dr, %I_cr = accum.%I.%I_cr + EXCLUDED.%I_cr',
+            res_key, p_name || '_totals_year', res_key, res_key, res_key, p_name || '_totals_year', res_key, res_key
+        );
+        res_ledger_update_c := res_ledger_update_c || format(
+            '%I_dr = accum.%I.%I_dr + EXCLUDED.%I_dr, %I_cr = accum.%I.%I_cr + EXCLUDED.%I_cr',
+            res_key, p_name || '_balance_cache', res_key, res_key, res_key, p_name || '_balance_cache', res_key, res_key
+        );
+
+        res_ledger_sub_d := res_ledger_sub_d || format(
+            '%I_dr = t.%I_dr - agg.%I_dr, %I_cr = t.%I_cr - agg.%I_cr',
+            res_key, res_key, res_key, res_key, res_key, res_key
+        );
+        res_ledger_sub_m := res_ledger_sub_m || format(
+            '%I_dr = t.%I_dr - agg.%I_dr, %I_cr = t.%I_cr - agg.%I_cr',
+            res_key, res_key, res_key, res_key, res_key, res_key
+        );
+        res_ledger_sub_y := res_ledger_sub_y || format(
+            '%I_dr = t.%I_dr - agg.%I_dr, %I_cr = t.%I_cr - agg.%I_cr',
+            res_key, res_key, res_key, res_key, res_key, res_key
+        );
+        res_ledger_sub_c := res_ledger_sub_c || format(
+            '%I_dr = c.%I_dr - agg.%I_dr, %I_cr = c.%I_cr - agg.%I_cr',
+            res_key, res_key, res_key, res_key, res_key, res_key
+        );
+
         first_res := false;
     END LOOP;
 
     -- ============================================================
-    -- BEFORE INSERT trigger (FOR EACH ROW — modifies NEW)
+    -- 1. BEFORE INSERT trigger (FOR EACH ROW): compute dim_hash
     -- ============================================================
-    EXECUTE format(
-        'CREATE OR REPLACE FUNCTION accum.%I() RETURNS trigger
-         LANGUAGE plpgsql AS $trg$
-         BEGIN
-             NEW.dim_hash := accum.%I(%s);
-             IF NEW.period < now() - interval ''1 day'' THEN
-                 NEW.movement_type := ''adjustment'';
-             END IF;
-             RETURN NEW;
-         END;
-         $trg$',
-        '_trg_' || p_name || '_before_insert',
-        '_hash_' || p_name,
-        hash_call_args
-    );
+    IF p_kind = 'ledger' THEN
+        DECLARE
+            hash_call_args_dr text;
+            hash_call_args_cr text;
+        BEGIN
+            hash_call_args_dr := 'NEW.subconto_dr' || CASE WHEN hash_call_args != '' THEN ', ' || hash_call_args ELSE '' END;
+            hash_call_args_cr := 'NEW.subconto_cr' || CASE WHEN hash_call_args != '' THEN ', ' || hash_call_args ELSE '' END;
+            EXECUTE format(
+                'CREATE OR REPLACE FUNCTION accum.%I() RETURNS trigger
+                 LANGUAGE plpgsql AS $trg$
+                 BEGIN
+                     NEW.dim_hash_dr := accum.%I(%s);
+                     NEW.dim_hash_cr := accum.%I(%s);
+                     IF NEW.period < now() - interval ''1 day'' THEN
+                         NEW.movement_type := ''adjustment'';
+                     END IF;
+                     RETURN NEW;
+                 END;
+                 $trg$',
+                '_trg_' || p_name || '_before_insert',
+                '_hash_' || p_name,
+                hash_call_args_dr,
+                '_hash_' || p_name,
+                hash_call_args_cr
+            );
+        END;
+    ELSE
+        EXECUTE format(
+            'CREATE OR REPLACE FUNCTION accum.%I() RETURNS trigger
+             LANGUAGE plpgsql AS $trg$
+             BEGIN
+                 NEW.dim_hash := accum.%I(%s);
+                 IF NEW.period < now() - interval ''1 day'' THEN
+                     NEW.movement_type := ''adjustment'';
+                 END IF;
+                 RETURN NEW;
+             END;
+             $trg$',
+            '_trg_' || p_name || '_before_insert',
+            '_hash_' || p_name,
+            hash_call_args
+        );
+    END IF;
 
     EXECUTE format(
         'CREATE TRIGGER trg_%s_before_insert
@@ -356,85 +600,181 @@ BEGIN
     );
 
     -- ============================================================
-    -- AFTER INSERT trigger (FOR EACH STATEMENT — batch aggregation)
+    -- 2. AFTER INSERT trigger (FOR EACH STATEMENT): batch aggregation
+    --    Uses REFERENCING NEW TABLE AS new_rows for efficient batch processing
     -- ============================================================
-    totals_upsert_d := format(
-        'INSERT INTO accum.%I (dim_hash, period, %s, %s)
-         SELECT dim_hash, period::date, %s, %s
-         FROM new_rows
-         GROUP BY dim_hash, period::date, %s
-         ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
-        p_name || '_totals_day',
-        dim_cols, res_cols,
-        dim_cols, res_sum_cols,
-        dim_cols,
-        res_update_d
-    );
 
-    totals_upsert_m := format(
-        'INSERT INTO accum.%I (dim_hash, period, %s, %s)
-         SELECT dim_hash, date_trunc(''month'', period)::date, %s, %s
-         FROM new_rows
-         GROUP BY dim_hash, date_trunc(''month'', period)::date, %s
-         ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
-        p_name || '_totals_month',
-        dim_cols, res_cols,
-        dim_cols, res_sum_cols,
-        dim_cols,
-        res_update_m
-    );
+    IF p_kind = 'ledger' THEN
+        -- totals_day UPSERT with aggregation
+        totals_upsert_d := format(
+            'WITH splits AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, subconto_dr AS subconto, period::date AS period, %s, %s FROM new_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, subconto_cr AS subconto, period::date AS period, %s, %s FROM new_rows
+             )
+             INSERT INTO accum.%I (account, dim_hash, subconto, period, %s, %s)
+             SELECT account, dim_hash, subconto, period, %s, %s
+             FROM splits
+             GROUP BY account, dim_hash, subconto, period, %s
+             ON CONFLICT (account, dim_hash, period) DO UPDATE SET %s',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            p_name || '_totals_day',
+            dim_cols, ledger_res_cols,
+            dim_cols, ledger_res_sum_cols,
+            dim_cols,
+            res_ledger_update_d
+        );
 
-    totals_upsert_y := format(
-        'INSERT INTO accum.%I (dim_hash, period, %s, %s)
-         SELECT dim_hash, date_trunc(''year'', period)::date, %s, %s
-         FROM new_rows
-         GROUP BY dim_hash, date_trunc(''year'', period)::date, %s
-         ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
-        p_name || '_totals_year',
-        dim_cols, res_cols,
-        dim_cols, res_sum_cols,
-        dim_cols,
-        res_update_y
-    );
+        -- totals_month UPSERT with aggregation
+        totals_upsert_m := format(
+            'WITH splits AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, subconto_dr AS subconto, date_trunc(''month'', period)::date AS period, %s, %s FROM new_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, subconto_cr AS subconto, date_trunc(''month'', period)::date AS period, %s, %s FROM new_rows
+             )
+             INSERT INTO accum.%I (account, dim_hash, subconto, period, %s, %s)
+             SELECT account, dim_hash, subconto, period, %s, %s
+             FROM splits
+             GROUP BY account, dim_hash, subconto, period, %s
+             ON CONFLICT (account, dim_hash, period) DO UPDATE SET %s',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            p_name || '_totals_month',
+            dim_cols, ledger_res_cols,
+            dim_cols, ledger_res_sum_cols,
+            dim_cols,
+            res_ledger_update_m
+        );
 
-    IF p_kind = 'balance' THEN
-        IF NOT p_high_write THEN
-            cache_upsert := format(
-                'INSERT INTO accum.%I (dim_hash, %s, %s, last_movement_at, last_movement_id, version)
-                 SELECT dim_hash, %s, %s, now(), (array_agg(id))[1], 1
-                 FROM new_rows
-                 GROUP BY dim_hash, %s
-                 ON CONFLICT (dim_hash) DO UPDATE SET %s,
-                     last_movement_at = EXCLUDED.last_movement_at,
-                     last_movement_id = EXCLUDED.last_movement_id,
-                     version = accum.%I.version + 1',
-                p_name || '_balance_cache',
-                dim_cols, res_cols,
-                dim_cols, res_sum_cols,
-                dim_cols,
-                res_update_c,
-                p_name || '_balance_cache'
-            );
-        ELSE
-            -- High-write: seed balance_cache rows (zeroed resources) then append to delta buffer
-            cache_upsert := format(
-                'INSERT INTO accum.%I (dim_hash, %s, last_movement_at, last_movement_id, version)
-                 SELECT DISTINCT ON (dim_hash) dim_hash, %s, now(), id, 0
-                 FROM new_rows
-                 ON CONFLICT (dim_hash) DO NOTHING;
-                 INSERT INTO accum.%I (dim_hash, %s)
-                 SELECT dim_hash, %s
-                 FROM new_rows',
-                p_name || '_balance_cache',
-                dim_cols,
-                dim_cols,
-                p_name || '_balance_cache_delta',
-                res_cols,
-                res_cols
-            );
+        -- totals_year UPSERT with aggregation
+        totals_upsert_y := format(
+            'WITH splits AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, subconto_dr AS subconto, date_trunc(''year'', period)::date AS period, %s, %s FROM new_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, subconto_cr AS subconto, date_trunc(''year'', period)::date AS period, %s, %s FROM new_rows
+             )
+             INSERT INTO accum.%I (account, dim_hash, subconto, period, %s, %s)
+             SELECT account, dim_hash, subconto, period, %s, %s
+             FROM splits
+             GROUP BY account, dim_hash, subconto, period, %s
+             ON CONFLICT (account, dim_hash, period) DO UPDATE SET %s',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            p_name || '_totals_year',
+            dim_cols, ledger_res_cols,
+            dim_cols, ledger_res_sum_cols,
+            dim_cols,
+            res_ledger_update_y
+        );
+
+        -- balance_cache UPSERT
+        cache_upsert := format(
+            'WITH splits AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, subconto_dr AS subconto, %s, %s FROM new_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, subconto_cr AS subconto, %s, %s FROM new_rows
+             )
+             INSERT INTO accum.%I (account, dim_hash, subconto, %s, %s, last_movement_at, last_movement_id, version)
+             SELECT account, dim_hash, subconto, %s, %s, now(), NULL, 1
+             FROM splits
+             GROUP BY account, dim_hash, subconto, %s
+             ON CONFLICT (account, dim_hash) DO UPDATE SET %s,
+                 last_movement_at = EXCLUDED.last_movement_at,
+                 version = accum.%I.version + 1',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            p_name || '_balance_cache',
+            dim_cols, ledger_res_cols,
+            dim_cols, ledger_res_sum_cols,
+            dim_cols,
+            res_ledger_update_c,
+            p_name || '_balance_cache'
+        );
+    ELSE
+        -- totals_day UPSERT with aggregation (standard)
+        totals_upsert_d := format(
+            'INSERT INTO accum.%I (dim_hash, period, %s, %s)
+             SELECT dim_hash, period::date, %s, %s
+             FROM new_rows
+             GROUP BY dim_hash, period::date, %s
+             ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
+            p_name || '_totals_day',
+            dim_cols, res_cols,
+            dim_cols, res_sum_cols,
+            dim_cols,
+            res_update_d
+        );
+
+        -- totals_month UPSERT with aggregation (standard)
+        totals_upsert_m := format(
+            'INSERT INTO accum.%I (dim_hash, period, %s, %s)
+             SELECT dim_hash, date_trunc(''month'', period)::date, %s, %s
+             FROM new_rows
+             GROUP BY dim_hash, date_trunc(''month'', period)::date, %s
+             ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
+            p_name || '_totals_month',
+            dim_cols, res_cols,
+            dim_cols, res_sum_cols,
+            dim_cols,
+            res_update_m
+        );
+
+        -- totals_year UPSERT with aggregation (standard)
+        totals_upsert_y := format(
+            'INSERT INTO accum.%I (dim_hash, period, %s, %s)
+             SELECT dim_hash, date_trunc(''year'', period)::date, %s, %s
+             FROM new_rows
+             GROUP BY dim_hash, date_trunc(''year'', period)::date, %s
+             ON CONFLICT (dim_hash, period) DO UPDATE SET %s',
+            p_name || '_totals_year',
+            dim_cols, res_cols,
+            dim_cols, res_sum_cols,
+            dim_cols,
+            res_update_y
+        );
+
+        -- balance_cache UPSERT (only for balance kind)
+        IF p_kind = 'balance' THEN
+            IF NOT p_high_write THEN
+                cache_upsert := format(
+                    'INSERT INTO accum.%I (dim_hash, %s, %s, last_movement_at, last_movement_id, version)
+                     SELECT dim_hash, %s, %s, now(), (array_agg(id))[1], 1
+                     FROM new_rows
+                     GROUP BY dim_hash, %s
+                     ON CONFLICT (dim_hash) DO UPDATE SET %s,
+                         last_movement_at = EXCLUDED.last_movement_at,
+                         last_movement_id = EXCLUDED.last_movement_id,
+                         version = accum.%I.version + 1',
+                    p_name || '_balance_cache',
+                    dim_cols, res_cols,
+                    dim_cols, res_sum_cols,
+                    dim_cols,
+                    res_update_c,
+                    p_name || '_balance_cache'
+                );
+            ELSE
+                -- High-write: seed balance_cache rows (zeroed resources) then append to delta buffer
+                cache_upsert := format(
+                    'INSERT INTO accum.%I (dim_hash, %s, last_movement_at, last_movement_id, version)
+                     SELECT DISTINCT ON (dim_hash) dim_hash, %s, now(), id, 0
+                     FROM new_rows
+                     ON CONFLICT (dim_hash) DO NOTHING;
+                     INSERT INTO accum.%I (dim_hash, %s)
+                     SELECT dim_hash, %s
+                     FROM new_rows',
+                    p_name || '_balance_cache',
+                    dim_cols,
+                    dim_cols,
+                    p_name || '_balance_cache_delta',
+                    res_cols,
+                    res_cols
+                );
+            END IF;
         END IF;
     END IF;
 
+    -- Assemble AFTER INSERT trigger body
     trg_body_insert := totals_upsert_d || '; ' || totals_upsert_m || '; ' || totals_upsert_y || ';';
     IF cache_upsert != '' THEN
         trg_body_insert := trg_body_insert || ' ' || cache_upsert || ';';
@@ -463,35 +803,131 @@ BEGIN
     );
 
     -- ============================================================
-    -- AFTER DELETE trigger (FOR EACH STATEMENT — batch subtraction)
+    -- 3. AFTER DELETE trigger (FOR EACH STATEMENT): batch subtraction
+    --    Uses REFERENCING OLD TABLE AS old_rows
     -- ============================================================
-    del_totals_d := format(
-        'UPDATE accum.%I t SET %s
-         FROM (SELECT dim_hash, period::date AS period, %s
-               FROM old_rows GROUP BY dim_hash, period::date) agg
-         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
-        p_name || '_totals_day', res_sub_d, res_sum_cols);
 
-    del_totals_m := format(
-        'UPDATE accum.%I t SET %s
-         FROM (SELECT dim_hash, date_trunc(''month'', period)::date AS period, %s
-               FROM old_rows GROUP BY dim_hash, date_trunc(''month'', period)::date) agg
-         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
-        p_name || '_totals_month', res_sub_m, res_sum_cols);
+    IF p_kind = 'ledger' THEN
+        -- Subtract aggregated resources from totals_day
+        del_totals_d := format(
+            'WITH splits_old AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, period::date AS period, %s, %s FROM old_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, period::date AS period, %s, %s FROM old_rows
+             ),
+             agg AS (
+                 SELECT account, dim_hash, period, %s
+                 FROM splits_old
+                 GROUP BY account, dim_hash, period
+             )
+             UPDATE accum.%I t SET %s
+             FROM agg
+             WHERE t.account = agg.account AND t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            ledger_res_sum_cols,
+            p_name || '_totals_day',
+            res_ledger_sub_d
+        );
 
-    del_totals_y := format(
-        'UPDATE accum.%I t SET %s
-         FROM (SELECT dim_hash, date_trunc(''year'', period)::date AS period, %s
-               FROM old_rows GROUP BY dim_hash, date_trunc(''year'', period)::date) agg
-         WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
-        p_name || '_totals_year', res_sub_y, res_sum_cols);
+        -- Subtract aggregated resources from totals_month
+        del_totals_m := format(
+            'WITH splits_old AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, date_trunc(''month'', period)::date AS period, %s, %s FROM old_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, date_trunc(''month'', period)::date AS period, %s, %s FROM old_rows
+             ),
+             agg AS (
+                 SELECT account, dim_hash, period, %s
+                 FROM splits_old
+                 GROUP BY account, dim_hash, period
+             )
+             UPDATE accum.%I t SET %s
+             FROM agg
+             WHERE t.account = agg.account AND t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            ledger_res_sum_cols,
+            p_name || '_totals_month',
+            res_ledger_sub_m
+        );
 
-    IF p_kind = 'balance' THEN
+        -- Subtract aggregated resources from totals_year
+        del_totals_y := format(
+            'WITH splits_old AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, date_trunc(''year'', period)::date AS period, %s, %s FROM old_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, date_trunc(''year'', period)::date AS period, %s, %s FROM old_rows
+             ),
+             agg AS (
+                 SELECT account, dim_hash, period, %s
+                 FROM splits_old
+                 GROUP BY account, dim_hash, period
+             )
+             UPDATE accum.%I t SET %s
+             FROM agg
+             WHERE t.account = agg.account AND t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            ledger_res_sum_cols,
+            p_name || '_totals_year',
+            res_ledger_sub_y
+        );
+
+        -- Subtract aggregated resources from balance_cache
         del_cache := format(
-            'UPDATE accum.%I c SET %s, version = c.version + 1
-             FROM (SELECT dim_hash, %s FROM old_rows GROUP BY dim_hash) agg
-             WHERE c.dim_hash = agg.dim_hash',
-            p_name || '_balance_cache', res_sub_c, res_sum_cols);
+            'WITH splits_old AS (
+                 SELECT account_dr AS account, dim_hash_dr AS dim_hash, %s, %s FROM old_rows
+                 UNION ALL
+                 SELECT account_cr AS account, dim_hash_cr AS dim_hash, %s, %s FROM old_rows
+             ),
+             agg AS (
+                 SELECT account, dim_hash, %s
+                 FROM splits_old
+                 GROUP BY account, dim_hash
+             )
+             UPDATE accum.%I c SET %s, version = c.version + 1
+             FROM agg
+             WHERE c.account = agg.account AND c.dim_hash = agg.dim_hash',
+            dim_cols, ledger_res_dr_select,
+            dim_cols, ledger_res_cr_select,
+            ledger_res_sum_cols,
+            p_name || '_balance_cache',
+            res_ledger_sub_c
+        );
+    ELSE
+        -- Subtract aggregated resources from totals_day (standard)
+        del_totals_d := format(
+            'UPDATE accum.%I t SET %s
+             FROM (SELECT dim_hash, period::date AS period, %s
+                   FROM old_rows GROUP BY dim_hash, period::date) agg
+             WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            p_name || '_totals_day', res_sub_d, res_sum_cols);
+
+        -- Subtract aggregated resources from totals_month (standard)
+        del_totals_m := format(
+            'UPDATE accum.%I t SET %s
+             FROM (SELECT dim_hash, date_trunc(''month'', period)::date AS period, %s
+                   FROM old_rows GROUP BY dim_hash, date_trunc(''month'', period)::date) agg
+             WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            p_name || '_totals_month', res_sub_m, res_sum_cols);
+
+        -- Subtract aggregated resources from totals_year (standard)
+        del_totals_y := format(
+            'UPDATE accum.%I t SET %s
+             FROM (SELECT dim_hash, date_trunc(''year'', period)::date AS period, %s
+                   FROM old_rows GROUP BY dim_hash, date_trunc(''year'', period)::date) agg
+             WHERE t.dim_hash = agg.dim_hash AND t.period = agg.period',
+            p_name || '_totals_year', res_sub_y, res_sum_cols);
+
+        -- Subtract aggregated resources from balance_cache (standard)
+        IF p_kind = 'balance' THEN
+            del_cache := format(
+                'UPDATE accum.%I c SET %s, version = c.version + 1
+                 FROM (SELECT dim_hash, %s FROM old_rows GROUP BY dim_hash) agg
+                 WHERE c.dim_hash = agg.dim_hash',
+                p_name || '_balance_cache', res_sub_c, res_sum_cols);
+        END IF;
     END IF;
 
     EXECUTE format(
@@ -523,7 +959,8 @@ BEGIN
     );
 
     -- ============================================================
-    -- Protection triggers
+    -- 4. Protection triggers: prevent direct UPDATE on movements
+    --    and direct modification of derived tables outside trigger context
     -- ============================================================
 
     -- Block UPDATE on movements (must use register_repost)
@@ -549,7 +986,9 @@ BEGIN
         '_trg_' || p_name || '_block_update'
     );
 
-    -- Block direct modification of derived tables
+    -- Block direct modification of derived tables (totals + cache)
+    -- pg_trigger_depth() > 0 means we are inside a trigger chain (legitimate)
+    -- pg_accumulator.allow_internal = 'on' means maintenance function is running
     EXECUTE format(
         'CREATE OR REPLACE FUNCTION accum.%I() RETURNS trigger
          LANGUAGE plpgsql AS $trg$
@@ -566,6 +1005,7 @@ BEGIN
         '_trg_' || p_name || '_protect_derived'
     );
 
+    -- Protect totals_day
     EXECUTE format(
         'CREATE TRIGGER trg_%s_protect_totals_day
          BEFORE INSERT OR UPDATE OR DELETE ON accum.%I
@@ -575,6 +1015,7 @@ BEGIN
         '_trg_' || p_name || '_protect_derived'
     );
 
+    -- Protect totals_month
     EXECUTE format(
         'CREATE TRIGGER trg_%s_protect_totals_month
          BEFORE INSERT OR UPDATE OR DELETE ON accum.%I
@@ -584,6 +1025,7 @@ BEGIN
         '_trg_' || p_name || '_protect_derived'
     );
 
+    -- Protect totals_year
     EXECUTE format(
         'CREATE TRIGGER trg_%s_protect_totals_year
          BEFORE INSERT OR UPDATE OR DELETE ON accum.%I
@@ -593,7 +1035,8 @@ BEGIN
         '_trg_' || p_name || '_protect_derived'
     );
 
-    IF p_kind = 'balance' THEN
+    -- Protect balance_cache (if applicable)
+    IF p_kind = 'balance' OR p_kind = 'ledger' THEN
         EXECUTE format(
             'CREATE TRIGGER trg_%s_protect_balance_cache
              BEFORE INSERT OR UPDATE OR DELETE ON accum.%I
@@ -627,8 +1070,8 @@ BEGIN
     PERFORM accum._validate_dimensions(dimensions);
     PERFORM accum._validate_resources(resources);
 
-    IF kind NOT IN ('balance', 'turnover') THEN
-        RAISE EXCEPTION 'Invalid kind: %. Must be balance or turnover', kind;
+    IF kind NOT IN ('balance', 'turnover', 'ledger') THEN
+        RAISE EXCEPTION 'Invalid kind: %. Must be balance, turnover or ledger', kind;
     END IF;
     IF totals_period NOT IN ('day', 'month', 'year') THEN
         RAISE EXCEPTION 'Invalid totals_period: %', totals_period;
@@ -650,7 +1093,7 @@ BEGIN
         PERFORM accum._ddl_create_movements_table(name, recorder_type, dimensions, resources);
         PERFORM accum._ddl_create_totals_tables(name, dimensions, resources);
 
-        IF kind = 'balance' THEN
+        IF kind = 'balance' OR kind = 'ledger' THEN
             PERFORM accum._ddl_create_balance_cache(name, dimensions, resources);
         END IF;
 

@@ -23,8 +23,8 @@ BEGIN
     PERFORM @extschema@._validate_dimensions(dimensions);
     PERFORM @extschema@._validate_resources(resources);
 
-    IF kind NOT IN ('balance', 'turnover') THEN
-        RAISE EXCEPTION 'Invalid kind: %. Must be balance or turnover', kind;
+    IF kind NOT IN ('balance', 'turnover', 'ledger') THEN
+        RAISE EXCEPTION 'Invalid kind: %. Must be balance, turnover or ledger', kind;
     END IF;
 
     IF totals_period NOT IN ('day', 'month', 'year') THEN
@@ -50,7 +50,7 @@ BEGIN
     PERFORM @extschema@._ddl_create_movements_table(name, recorder_type, dimensions, resources);
     PERFORM @extschema@._ddl_create_totals_tables(name, dimensions, resources);
 
-    IF kind = 'balance' THEN
+    IF kind = 'balance' OR kind = 'ledger' THEN
         PERFORM @extschema@._ddl_create_balance_cache(name, dimensions, resources);
     END IF;
 

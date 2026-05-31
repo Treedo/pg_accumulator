@@ -431,6 +431,11 @@ CREATE OR REPLACE FUNCTION @extschema@._generate_read_functions(
     p_high_write boolean
 ) RETURNS void
 LANGUAGE plpgsql AS $$
+DECLARE
+    param_defs text := '';
+    dim_key    text;
+    dim_type   text;
+    v_where    text := 'c.account = p_account';
 BEGIN
     -- Generate _balance() only for balance-kind registers
     IF p_kind = 'balance' THEN
@@ -444,6 +449,54 @@ BEGIN
             $fn$',
             p_name || '_balance',
             p_name
+        );
+    ELSIF p_kind = 'ledger' THEN
+        param_defs := 'p_account text, p_subconto jsonb DEFAULT NULL';
+        FOR dim_key, dim_type IN SELECT * FROM jsonb_each_text(p_dimensions) ORDER BY key
+        LOOP
+            param_defs := param_defs || format(', p_%I %s DEFAULT NULL', dim_key, dim_type);
+            v_where := v_where || format(' AND (p_%I IS NULL OR c.%I = p_%I)', dim_key, dim_key, dim_key);
+        END LOOP;
+        v_where := v_where || ' AND (p_subconto IS NULL OR c.subconto = p_subconto)';
+
+        EXECUTE format(
+            'CREATE OR REPLACE FUNCTION @extschema@.%I(%s)
+            RETURNS TABLE (
+                account text,
+                subconto jsonb,
+                turnover_dr numeric,
+                amount_cr numeric,
+                balance numeric
+            )
+            LANGUAGE plpgsql STABLE AS $fn$
+            DECLARE
+                v_acc_type text;
+            BEGIN
+                v_acc_type := CASE 
+                    WHEN p_account ~ ''^(1|2|9)'' THEN ''A''
+                    WHEN p_account ~ ''^(4|5|7)'' THEN ''P''
+                    ELSE ''AP''
+                END;
+
+                RETURN QUERY
+                SELECT 
+                    c.account,
+                    c.subconto,
+                    c.amount_dr,
+                    c.amount_cr,
+                    CASE 
+                        WHEN v_acc_type = ''A'' THEN c.amount_dr - c.amount_cr
+                        WHEN v_acc_type = ''P'' THEN c.amount_cr - c.amount_dr
+                        ELSE c.amount_dr - c.amount_cr
+                    END AS balance
+                FROM @extschema@.%I c
+                WHERE %s;
+            END;
+            $fn$',
+            p_name || '_get_balance',
+            param_defs,
+            p_name || '_balance_cache',
+            v_where
         );
     END IF;
 
@@ -493,5 +546,10 @@ BEGIN
         p_name || '_turnover');
     EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I(text, timestamptz, timestamptz, jsonb) CASCADE',
         p_name || '_movements');
+    BEGIN
+        EXECUTE format('DROP FUNCTION IF EXISTS @extschema@.%I CASCADE', p_name || '_get_balance');
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
 END;
 $$;

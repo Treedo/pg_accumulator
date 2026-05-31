@@ -1,16 +1,15 @@
-# Prisma + pg_accumulator Demo — Warehouse Inventory
+# Prisma + pg_accumulator Demo — Warehouse & General Ledger
 
-A demo warehouse application using the **prisma-accumulator** package for type-safe interaction with pg_accumulator accumulation registers via Prisma ORM.
+A demo application using the **prisma-accumulator** package for type-safe interaction with pg_accumulator accumulation registers via Prisma ORM. It showcases both standard inventory tracking and complex double-entry bookkeeping (General Ledger).
 
 ## What It Demonstrates
 
-- `defineRegister()` — declaring a typed `inventory` register
-- `AccumulatorClient` — client initialization with Prisma
-- `.post()` — receiving and shipping goods
-- `.unpost()` — canceling operations
-- `.balance()` — querying current balances
-- `.movements()` — browsing movement history
-- `.listRegisters()` — listing registered registers
+- **`defineRegister()`** — declaring typed `inventory` (balance) and `general_ledger` (ledger) registers.
+- **`AccumulatorClient`** — client initialization integrated seamlessly with Prisma.
+- **Inventory Operations** — receiving (`.post()`), shipping, canceling (`.unpost()`), balances (`.balance()`), and turnover logic.
+- **Double-Entry Bookkeeping** — debit & credit mechanics, Trial Balance (ОСВ), JSON subconto analytics (`account_dr`, `subconto_dr`, etc.).
+- **Ledger Verification** — native PostgreSQL `accum.register_ledger_verify()` soundness checks.
+- **System Management** — browsing movement history (`.movements()`) and introspecting system architecture (`.listRegisters()`).
 
 ## Getting Started
 
@@ -24,23 +23,23 @@ Open in browser: **http://localhost:3303**
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  Browser UI (public/index.html)             │
-│  Tabs: Balances │ Operations │ History │ Regs│
-└─────────────────┬───────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│  Browser UI (public/index.html)                        │
+│  Tabs: Balances │ Bookkeeping │ Operations │ History   │
+└─────────────────┬──────────────────────────────────────┘
                   │ REST API
-┌─────────────────▼───────────────────────────┐
-│  Express + Prisma + prisma-accumulator      │
-│  src/index.ts — API endpoints               │
-│  src/registers.ts — defineRegister()        │
-└─────────────────┬───────────────────────────┘
-                  │ SQL (via Prisma $queryRawUnsafe)
-┌─────────────────▼───────────────────────────┐
-│  PostgreSQL + pg_accumulator extension      │
-│  Register: inventory (balance)              │
-│  Dimensions: warehouse_id, product_id       │
-│  Resources: quantity, cost                  │
-└─────────────────────────────────────────────┘
+┌─────────────────▼──────────────────────────────────────┐
+│  Express + Prisma + prisma-accumulator                 │
+│  src/index.ts — API endpoints (Inventory & Ledger)     │
+│  src/registers.ts — defineRegister() definitions       │
+└─────────────────┬──────────────────────────────────────┘
+                  │ SQL (via Prisma client & extensions)
+┌─────────────────▼──────────────────────────────────────┐
+│  PostgreSQL + pg_accumulator extension                 │
+│  Registers:                                            │
+│  1) inventory (balance): warehouse_id, product_id      │
+│  2) general_ledger (ledger): double-entry tracking     │
+└────────────────────────────────────────────────────────┘
 ```
 
 ## Project Structure
@@ -56,7 +55,7 @@ demo/prisma/
 │   └── schema.prisma       # Models: Product, Warehouse
 ├── src/
 │   ├── index.ts            # Express API server
-│   └── registers.ts        # Register definition (inventory)
+│   └── registers.ts        # Register definition (inventory & ledger)
 └── public/
     └── index.html          # SPA interface
 ```
@@ -68,12 +67,17 @@ demo/prisma/
 | GET | `/api/products` | List products |
 | GET | `/api/warehouses` | List warehouses |
 | GET | `/api/balances` | Balances by warehouse/product |
-| GET | `/api/movements` | Last 50 movements |
+| GET | `/api/movements` | Last 50 movements across inventory |
 | GET | `/api/turnover` | Turnovers (query params: dateFrom, dateTo, warehouse_id) |
-| GET | `/api/registers` | List registers |
-| POST | `/api/receipt` | Receive goods |
-| POST | `/api/shipment` | Ship goods |
+| GET | `/api/registers` | List all system registers |
+| POST | `/api/receipt` | Receive goods (inventory) |
+| POST | `/api/shipment` | Ship goods (inventory) |
 | POST | `/api/unpost` | Cancel an operation |
+| GET | `/api/ledger/balances` | Trial Balance (Оборотно-сальдова відомість) |
+| GET | `/api/ledger/movements`| General Journal of double-entry records |
+| GET | `/api/ledger/verify` | Ledger balanced/soundness check |
+| POST | `/api/ledger/post` | Post new double-entry journal movement |
+| POST | `/api/ledger/unpost` | Cancel/Reverse a journal movement |
 
 ## Shutdown
 

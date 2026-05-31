@@ -17,3 +17,19 @@ export const inventory = defineRegister({
   },
   totals_period: 'month',
 });
+
+/**
+ * General Ledger bookkeeping register — tracks debits/credits
+ * by accounts with dynamic subcontingent JSON arrays.
+ */
+export const generalLedger = defineRegister({
+  name: 'general_ledger',
+  kind: 'ledger',
+  dimensions: {
+    currency: 'text',
+  },
+  resources: {
+    amount: 'numeric(18,2)',
+  },
+  totals_period: 'day',
+});

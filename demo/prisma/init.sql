@@ -28,18 +28,18 @@ CREATE TABLE IF NOT EXISTS "Warehouse" (
 
 -- Seed warehouses
 INSERT INTO "Warehouse" (id, name, city) VALUES
-    (1, 'Центральний склад', 'Київ'),
-    (2, 'Склад Захід', 'Львів'),
-    (3, 'Склад Південь', 'Одеса')
+    (1, 'Central Warehouse', 'Kyiv'),
+    (2, 'West Warehouse', 'Lviv'),
+    (3, 'South Warehouse', 'Odesa')
 ON CONFLICT (id) DO NOTHING;
 
 -- Seed products
 INSERT INTO "Product" (id, name, sku, price) VALUES
-    (1, 'Ноутбук Lenovo T14', 'NB-T14', 32000.00),
-    (2, 'Монітор Dell 27"', 'MON-D27', 12500.00),
-    (3, 'Клавіатура механічна', 'KB-MECH', 3200.00),
-    (4, 'Миша бездротова', 'MS-WIFI', 1450.00),
-    (5, 'USB-хаб 7 портів', 'USB-HUB7', 890.00)
+    (1, 'Laptop Lenovo T14', 'NB-T14', 32000.00),
+    (2, 'Monitor Dell 27"', 'MON-D27', 12500.00),
+    (3, 'Mechanical Keyboard', 'KB-MECH', 3200.00),
+    (4, 'Wireless Mouse', 'MS-WIFI', 1450.00),
+    (5, 'USB Hub 7-port', 'USB-HUB7', 890.00)
 ON CONFLICT (id) DO NOTHING;
 
 -- Seed initial inventory movements
@@ -80,4 +80,62 @@ SELECT accum.register_post('inventory', '{
 SELECT accum.register_post('inventory', '{
     "recorder": "ship:003", "period": "2026-04-15",
     "warehouse_id": 2, "product_id": 4, "quantity": -50, "cost": -72500
+}');
+
+-- Create a ledger register for general ledger bookkeeping
+SELECT accum.register_create(
+    name          := 'general_ledger',
+    dimensions    := '{"currency": "text"}',
+    resources     := '{"amount": "numeric(18,2)"}',
+    kind          := 'ledger',
+    totals_period := 'day'
+);
+
+-- Seed Ledger postings:
+-- 1. Initial capital input (Active debit cash 10, Passive credit capital 40)
+SELECT accum.register_post('general_ledger', '{
+    "recorder": "capital:1",
+    "period":   "2026-04-01",
+    "currency": "USD",
+    "account_dr": "10",
+    "subconto_dr": {"bank": "Main Bank"},
+    "account_cr": "40",
+    "subconto_cr": {"owner": "Founder"},
+    "amount": 100000.00
+}');
+
+-- 2. Buy raw materials / goods (Active debit inventory 28, Active credit cash 10)
+SELECT accum.register_post('general_ledger', '{
+    "recorder": "purchase:1",
+    "period":   "2026-04-02",
+    "currency": "USD",
+    "account_dr": "28",
+    "subconto_dr": {"item_id": 1, "supplier": "Wholesale Corp"},
+    "account_cr": "10",
+    "subconto_cr": {"bank": "Main Bank"},
+    "amount": 30000.00
+}');
+
+-- 3. Office Rent payment (Active debit rent expense 90, Active credit cash 10)
+SELECT accum.register_post('general_ledger', '{
+    "recorder": "rent:1",
+    "period":   "2026-04-05",
+    "currency": "USD",
+    "account_dr": "90",
+    "subconto_dr": {"purpose": "Office Rent April"},
+    "account_cr": "10",
+    "subconto_cr": {"bank": "Main Bank"},
+    "amount": 2000.00
+}');
+
+-- 4. Get short term bank loan (Active debit cash 10, Passive credit loan 50)
+SELECT accum.register_post('general_ledger', '{
+    "recorder": "loan:1",
+    "period":   "2026-04-06",
+    "currency": "USD",
+    "account_dr": "10",
+    "subconto_dr": {"bank": "Main Bank"},
+    "account_cr": "50",
+    "subconto_cr": {"lender": "First Federal"},
+    "amount": 50000.00
 }');

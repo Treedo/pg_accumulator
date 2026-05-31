@@ -19,3 +19,11 @@ Revision history for PostgreSQL extension pg_accumulator
     - 22 pgTAP test suites
     - Demo applications: Python/Flask, TypeScript/Express, Prisma, SQLAlchemy
     - Integration packages: prisma-accumulator, sqlalchemy-accumulator
+
+1.2.0 2026-05-31
+
+    - Implemented dynamic ledger register creation function.
+    - Created triggers for managing ledger movements and balance cache.
+    - Developed functions for balance retrieval and soundness verification.
+    - Added test cases for various operations including deposits, purchases, and expense payments.
+    - Included assertions to validate ledger integrity and balance correctness.

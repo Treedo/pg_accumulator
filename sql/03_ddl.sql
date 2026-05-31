@@ -43,6 +43,27 @@ END;
 $$;
 
 -- ============================================================
+-- HELPER: Build ledger resource column SQL fragment with _dr and _cr
+-- Returns comma-prefixed text: ", amount_dr numeric NOT NULL DEFAULT 0, amount_cr numeric NOT NULL DEFAULT 0"
+-- ============================================================
+CREATE OR REPLACE FUNCTION @extschema@._build_ledger_res_columns(p_resources jsonb)
+RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+    res_key  text;
+    res_type text;
+    result   text := '';
+BEGIN
+    FOR res_key, res_type IN SELECT * FROM jsonb_each_text(p_resources) ORDER BY key
+    LOOP
+        result := result || format(', %I_dr %s NOT NULL DEFAULT 0', res_key, res_type);
+        result := result || format(', %I_cr %s NOT NULL DEFAULT 0', res_key, res_type);
+    END LOOP;
+    RETURN result;
+END;
+$$;
+
+-- ============================================================
 -- CREATE MOVEMENTS TABLE (partitioned by period)
 -- ============================================================
 CREATE OR REPLACE FUNCTION @extschema@._ddl_create_movements_table(
@@ -55,27 +76,55 @@ LANGUAGE plpgsql AS $$
 DECLARE
     col_defs text;
     res_defs text;
+    v_kind   text;
 BEGIN
+    SELECT kind INTO v_kind FROM @extschema@._registers WHERE name = p_name;
     col_defs := @extschema@._build_dim_columns(p_dimensions);
-    res_defs := @extschema@._build_res_columns(p_resources);
 
-    EXECUTE format(
-        'CREATE TABLE @extschema@.%I (
-            id             uuid          DEFAULT gen_random_uuid(),
-            recorded_at    timestamptz   DEFAULT now() NOT NULL,
-            recorder       %s            NOT NULL,
-            period         timestamptz   NOT NULL,
-            movement_type  text          DEFAULT ''regular'' NOT NULL,
-            dim_hash       bigint        NOT NULL
-            %s
-            %s,
-            PRIMARY KEY (id, period)
-        ) PARTITION BY RANGE (period)',
-        p_name || '_movements',
-        p_recorder_type,
-        col_defs,
-        res_defs
-    );
+    IF v_kind = 'ledger' THEN
+        res_defs := @extschema@._build_res_columns(p_resources);
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                id             uuid          DEFAULT gen_random_uuid(),
+                recorded_at    timestamptz   DEFAULT now() NOT NULL,
+                recorder       %s            NOT NULL,
+                period         timestamptz   NOT NULL,
+                movement_type  text          DEFAULT ''regular'' NOT NULL,
+                account_dr     text          NOT NULL,
+                subconto_dr    jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                account_cr     text          NOT NULL,
+                subconto_cr    jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                dim_hash_dr    bigint        NOT NULL,
+                dim_hash_cr    bigint        NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (id, period)
+            ) PARTITION BY RANGE (period)',
+            p_name || '_movements',
+            p_recorder_type,
+            col_defs,
+            res_defs
+        );
+    ELSE
+        res_defs := @extschema@._build_res_columns(p_resources);
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                id             uuid          DEFAULT gen_random_uuid(),
+                recorded_at    timestamptz   DEFAULT now() NOT NULL,
+                recorder       %s            NOT NULL,
+                period         timestamptz   NOT NULL,
+                movement_type  text          DEFAULT ''regular'' NOT NULL,
+                dim_hash       bigint        NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (id, period)
+            ) PARTITION BY RANGE (period)',
+            p_name || '_movements',
+            p_recorder_type,
+            col_defs,
+            res_defs
+        );
+    END IF;
 
     -- Default partition (catches periods without a specific partition)
     EXECUTE format(
@@ -98,56 +147,110 @@ LANGUAGE plpgsql AS $$
 DECLARE
     col_defs text;
     res_defs text;
+    v_kind   text;
 BEGIN
+    SELECT kind INTO v_kind FROM @extschema@._registers WHERE name = p_name;
     col_defs := @extschema@._build_dim_columns(p_dimensions);
-    res_defs := @extschema@._build_res_columns(p_resources);
 
-    -- totals_day: daily turnover aggregation
-    EXECUTE format(
-        'CREATE TABLE @extschema@.%I (
-            dim_hash       bigint        NOT NULL,
-            period         date          NOT NULL
-            %s
-            %s,
-            PRIMARY KEY (dim_hash, period)
-        )',
-        p_name || '_totals_day',
-        col_defs,
-        res_defs
-    );
+    IF v_kind = 'ledger' THEN
+        res_defs := @extschema@._build_ledger_res_columns(p_resources);
+        -- totals_day: daily turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                account        text          NOT NULL,
+                dim_hash       bigint        NOT NULL,
+                subconto       jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (account, dim_hash, period)
+            )',
+            p_name || '_totals_day',
+            col_defs,
+            res_defs
+        );
 
-    -- totals_month: monthly turnover aggregation
-    EXECUTE format(
-        'CREATE TABLE @extschema@.%I (
-            dim_hash       bigint        NOT NULL,
-            period         date          NOT NULL
-            %s
-            %s,
-            PRIMARY KEY (dim_hash, period)
-        )',
-        p_name || '_totals_month',
-        col_defs,
-        res_defs
-    );
+        -- totals_month: monthly turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                account        text          NOT NULL,
+                dim_hash       bigint        NOT NULL,
+                subconto       jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (account, dim_hash, period)
+            )',
+            p_name || '_totals_month',
+            col_defs,
+            res_defs
+        );
 
-    -- totals_year: yearly turnover aggregation
-    EXECUTE format(
-        'CREATE TABLE @extschema@.%I (
-            dim_hash       bigint        NOT NULL,
-            period         date          NOT NULL
-            %s
-            %s,
-            PRIMARY KEY (dim_hash, period)
-        )',
-        p_name || '_totals_year',
-        col_defs,
-        res_defs
-    );
+        -- totals_year: yearly turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                account        text          NOT NULL,
+                dim_hash       bigint        NOT NULL,
+                subconto       jsonb         NOT NULL DEFAULT ''{}''::jsonb,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (account, dim_hash, period)
+            )',
+            p_name || '_totals_year',
+            col_defs,
+            res_defs
+        );
+    ELSE
+        res_defs := @extschema@._build_res_columns(p_resources);
+
+        -- totals_day: daily turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                dim_hash       bigint        NOT NULL,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (dim_hash, period)
+            )',
+            p_name || '_totals_day',
+            col_defs,
+            res_defs
+        );
+
+        -- totals_month: monthly turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                dim_hash       bigint        NOT NULL,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (dim_hash, period)
+            )',
+            p_name || '_totals_month',
+            col_defs,
+            res_defs
+        );
+
+        -- totals_year: yearly turnover aggregation
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                dim_hash       bigint        NOT NULL,
+                period         date          NOT NULL
+                %s
+                %s,
+                PRIMARY KEY (dim_hash, period)
+            )',
+            p_name || '_totals_year',
+            col_defs,
+            res_defs
+        );
+    END IF;
 END;
 $$;
 
 -- ============================================================
--- CREATE BALANCE CACHE (only for kind='balance')
+-- CREATE BALANCE CACHE (only for kind='balance' or kind='ledger')
 -- ============================================================
 CREATE OR REPLACE FUNCTION @extschema@._ddl_create_balance_cache(
     p_name       text,
@@ -158,23 +261,45 @@ LANGUAGE plpgsql AS $$
 DECLARE
     col_defs text;
     res_defs text;
+    v_kind   text;
 BEGIN
+    SELECT kind INTO v_kind FROM @extschema@._registers WHERE name = p_name;
     col_defs := @extschema@._build_dim_columns(p_dimensions);
-    res_defs := @extschema@._build_res_columns(p_resources);
 
-    EXECUTE format(
-        'CREATE TABLE @extschema@.%I (
-            dim_hash         bigint          NOT NULL PRIMARY KEY
-            %s
-            %s,
-            last_movement_at timestamptz     NOT NULL DEFAULT now(),
-            last_movement_id uuid,
-            version          bigint          NOT NULL DEFAULT 0
-        )',
-        p_name || '_balance_cache',
-        col_defs,
-        res_defs
-    );
+    IF v_kind = 'ledger' THEN
+        res_defs := @extschema@._build_ledger_res_columns(p_resources);
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                account          text            NOT NULL,
+                dim_hash         bigint          NOT NULL,
+                subconto         jsonb           NOT NULL DEFAULT ''{}''::jsonb
+                %s
+                %s,
+                last_movement_at timestamptz     NOT NULL DEFAULT now(),
+                last_movement_id uuid,
+                version          bigint          NOT NULL DEFAULT 0,
+                PRIMARY KEY (account, dim_hash)
+            )',
+            p_name || '_balance_cache',
+            col_defs,
+            res_defs
+        );
+    ELSE
+        res_defs := @extschema@._build_res_columns(p_resources);
+        EXECUTE format(
+            'CREATE TABLE @extschema@.%I (
+                dim_hash         bigint          NOT NULL PRIMARY KEY
+                %s
+                %s,
+                last_movement_at timestamptz     NOT NULL DEFAULT now(),
+                last_movement_id uuid,
+                version          bigint          NOT NULL DEFAULT 0
+            )',
+            p_name || '_balance_cache',
+            col_defs,
+            res_defs
+        );
+    END IF;
 END;
 $$;
 
@@ -219,15 +344,30 @@ DECLARE
     dim_key text;
 BEGIN
     -- Movements indexes
-    EXECUTE format('CREATE INDEX ON @extschema@.%I (dim_hash, period)',
-        p_name || '_movements');
-    EXECUTE format('CREATE INDEX ON @extschema@.%I (recorder)',
-        p_name || '_movements');
-    EXECUTE format('CREATE INDEX ON @extschema@.%I (period)',
-        p_name || '_movements');
+    IF p_kind = 'ledger' THEN
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (dim_hash_dr, period)',
+            p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (dim_hash_cr, period)',
+            p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (account_dr)',
+            p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (account_cr)',
+            p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (recorder)',
+            p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (period)',
+            p_name || '_movements');
+    ELSE
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (dim_hash, period)',
+            p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (recorder)',
+            p_name || '_movements');
+        EXECUTE format('CREATE INDEX ON @extschema@.%I (period)',
+            p_name || '_movements');
+    END IF;
 
     -- Balance cache indexes: per-dimension for filtered queries
-    IF p_kind = 'balance' THEN
+    IF p_kind = 'balance' OR p_kind = 'ledger' THEN
         FOR dim_key IN SELECT * FROM jsonb_object_keys(p_dimensions)
         LOOP
             EXECUTE format('CREATE INDEX ON @extschema@.%I (%I)',

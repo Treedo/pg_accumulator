@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>pg_accumulator — Фінансовий трекер</title>
+  <title>pg_accumulator — Finance and Ledger Tracker</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -11,6 +11,7 @@
       --surface:  #ffffff;
       --accent:   #16a085;
       --accent2:  #1abc9c;
+      --accent-deep: #1a73e8;
       --text:     #2c3e50;
       --muted:    #7f8c8d;
       --border:   #dde3ea;
@@ -21,14 +22,46 @@
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
            background: var(--bg); color: var(--text); padding: 24px 16px; }
 
-    header { max-width: 1100px; margin: 0 auto 24px; }
-    header h1 { font-size: 1.5rem; color: var(--accent); }
-    header p  { color: var(--muted); font-size: .9rem; margin-top: 4px; }
+    header { max-width: 1200px; margin: 0 auto 20px; }
+    header h1 { font-size: 1.6rem; color: var(--accent-deep); }
+    header p  { color: var(--muted); font-size: .95rem; margin-top: 4px; }
+    .header-top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .lang-switcher { display: inline-flex; gap: 6px; background: var(--surface); padding: 6px; border-radius: 999px; box-shadow: var(--shadow); }
+    .lang-switcher button {
+      border: none; background: transparent; color: var(--muted); padding: 8px 12px;
+      border-radius: 999px; font-size: .8rem; font-weight: 700; cursor: pointer;
+    }
+    .lang-switcher button.active { background: var(--accent-deep); color: #fff; }
 
-    .wrap { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+    .wrap { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+
+    /* ---- System info banner ---- */
+    .sys-info {
+      background: #e8f0fe; padding: 12px 18px; border-radius: 8px;
+      font-size: 0.88rem; color: #1a73e8; display: flex;
+      justify-content: space-between; align-items: center; border: 1px solid #d2e3fc;
+    }
+    .sys-info code { background: #d2e3fc; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+
+    /* ---- badges ---- */
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.82rem; font-weight: bold; text-transform: uppercase; }
+    .badge.sound { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .badge.warning { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    
+    .acc-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.78rem; font-weight: bold; color: white; text-align: center; }
+    .acc-active { background: #28a745; }
+    .acc-passive { background: #fd7e14; }
+
+    /* ---- tab system ---- */
+    .tabs-nav { display: flex; gap: 4px; border-bottom: 2px solid #ccc; margin-bottom: 4px; }
+    .tab-btn { padding: 12px 24px; border: none; background: #e0e0e0; cursor: pointer; font-size: 0.95rem; font-weight: 600; border-top-left-radius: 6px; border-top-right-radius: 6px; color: #555; transition: all 0.2s; }
+    .tab-btn.active { background: var(--accent-deep); color: white; }
+    .tab-btn:hover:not(.active) { background: #d0d0d0; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
 
     /* ---- account cards ---- */
-    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 8px; }
     .balance-card {
       background: var(--surface); border-radius: 10px; padding: 18px 20px;
       box-shadow: var(--shadow); border-left: 4px solid var(--accent2);
@@ -44,7 +77,7 @@
 
     /* ---- card/panel ---- */
     .panel { background: var(--surface); border-radius: 10px; padding: 20px; box-shadow: var(--shadow); }
-    .panel h2 { font-size: 1rem; color: var(--text); margin-bottom: 16px;
+    .panel h2 { font-size: 1.1rem; color: var(--text); margin-bottom: 16px;
                 padding-bottom: 8px; border-bottom: 2px solid var(--accent2); }
 
     /* ---- form ---- */
@@ -60,10 +93,11 @@
       outline: none; border-color: var(--accent2);
       box-shadow: 0 0 0 3px rgba(26,188,156,.18);
     }
-    .btn { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer;
+    .btn { padding: 9px 20px; border: none; border-radius: 6px; cursor: pointer;
            font-size: .88rem; font-weight: 600; transition: opacity .15s; }
     .btn:hover { opacity: .85; }
     .btn-accent  { background: var(--accent); color: #fff; margin-top: 6px; }
+    .btn-accent-blue  { background: var(--accent-deep); color: #fff; margin-top: 6px; }
     .btn-danger  { background: var(--negative); color: #fff; padding: 4px 12px; font-size: .8rem; }
     .btn-secondary { background: #ecf0f1; color: var(--text); }
 
@@ -87,6 +121,8 @@
     .pos { color: var(--positive); font-weight: 600; }
     .neg { color: var(--negative); font-weight: 600; }
     .empty { color: var(--muted); font-style: italic; text-align: center; padding: 20px; }
+    .subconto-box { font-family: monospace; font-size: 0.8rem; color: #555; background: #f1f3f4; padding: 2px 6px; border-radius: 4px; display: inline-block; border: 1px solid #dadce0; }
+    .total-row { background: #e8f0fe !important; font-weight: bold; }
 
     /* ---- query result ---- */
     #query-result {
@@ -99,130 +135,257 @@
 <body>
 
 <header>
-  <h1>pg_accumulator</h1>
-  <p>Демонстрація розширення — фінансовий трекер</p>
+  <div class="header-top">
+    <div>
+      <h1>pg_accumulator</h1>
+      <p data-i18n="subtitle">High-performance PostgreSQL extension for aggregation and financial bookkeeping</p>
+    </div>
+    <div class="lang-switcher" aria-label="Language switcher">
+      <button type="button" id="lang-en" onclick="setLanguage('en')">EN</button>
+      <button type="button" id="lang-uk" onclick="setLanguage('uk')">UK</button>
+    </div>
+  </div>
 </header>
 
 <div class="wrap">
 
-  <!-- Account balance summary -->
-  <section>
-    <div class="cards" id="account-cards">
-      <div class="balance-card"><div class="label">Завантаження…</div></div>
+  <!-- System Info Banner -->
+  <section class="sys-info">
+    <div>
+      <strong data-i18n="registeredRegisters">Registered registers:</strong>
+      <span id="registered-registers-list"><code data-i18n="loadingLower">loading...</code></span>
+    </div>
+    <div>
+      <span id="ledger-soundness-badge" class="badge warning" data-i18n="loading">Loading...</span>
     </div>
   </section>
 
-  <!-- Post + Query -->
-  <div class="row">
-
-    <!-- Post transaction -->
-    <div class="panel">
-      <h2>Нова транзакція</h2>
-      <form id="post-form">
-        <div class="form-grid">
-          <div class="field">
-            <label>Документ (recorder)</label>
-            <input name="recorder" id="recorder" placeholder="payment:101" required>
-          </div>
-          <div class="field">
-            <label>Дата</label>
-            <input name="period" id="period" type="date" required>
-          </div>
-          <div class="field">
-            <label>Рахунок</label>
-            <select name="account" id="account" required>
-              <option value="1">Готівка</option>
-              <option value="2">Банківський рахунок</option>
-              <option value="3">Кредитна картка</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Категорія</label>
-            <select name="category" id="category" required>
-              <option value="1">Зарплата</option>
-              <option value="2">Їжа</option>
-              <option value="3">Транспорт</option>
-              <option value="4">Комунальні</option>
-              <option value="5">Розваги</option>
-              <option value="6">Інше</option>
-            </select>
-          </div>
-          <div class="field" style="grid-column: span 2;">
-            <label>Сума (позитивна = дохід, від'ємна = витрата)</label>
-            <input name="amount" id="amount" type="number" step="0.01" placeholder="-1500.00" required>
-          </div>
-        </div>
-        <button type="submit" class="btn btn-accent">Провести</button>
-      </form>
-    </div>
-
-    <!-- Query panel -->
-    <div class="panel">
-      <h2>Запит залишку на дату</h2>
-      <form id="balance-form">
-        <div class="form-grid">
-          <div class="field">
-            <label>Рахунок</label>
-            <select id="q-account">
-              <option value="">— всі —</option>
-              <option value="1">Готівка</option>
-              <option value="2">Банківський рахунок</option>
-              <option value="3">Кредитна картка</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Категорія</label>
-            <select id="q-category">
-              <option value="">— всі —</option>
-              <option value="1">Зарплата</option>
-              <option value="2">Їжа</option>
-              <option value="3">Транспорт</option>
-              <option value="4">Комунальні</option>
-              <option value="5">Розваги</option>
-              <option value="6">Інше</option>
-            </select>
-          </div>
-          <div class="field" style="grid-column: span 2;">
-            <label>На дату (порожньо = зараз)</label>
-            <input id="q-date" type="date">
-          </div>
-        </div>
-        <button type="submit" class="btn btn-secondary" style="margin-top:6px;">Показати залишок</button>
-      </form>
-      <div id="query-result"><pre id="query-json"></pre></div>
-
-      <h2 style="margin-top: 20px;">Скасувати документ</h2>
-      <form id="unpost-form" style="display:flex; gap:10px; align-items:flex-end;">
-        <div class="field" style="flex:1;">
-          <label>Документ (recorder)</label>
-          <input name="recorder" id="unpost-recorder" placeholder="payment:101" required>
-        </div>
-        <button type="submit" class="btn btn-danger" style="padding:7px 16px; font-size:.88rem;">Скасувати</button>
-      </form>
-    </div>
-
+  <!-- Tab Selector -->
+  <div class="tabs-nav">
+    <button class="tab-btn active" id="btn-tab-ledger" onclick="switchTab('ledger')" data-i18n="tabLedger">Ledger</button>
+    <button class="tab-btn" id="btn-tab-finance" onclick="switchTab('finance')" data-i18n="tabFinance">Finance Tracker</button>
   </div>
 
-  <!-- Movements table -->
-  <div class="panel">
-    <h2>Останні транзакції</h2>
-    <div style="overflow-x:auto;">
-      <table id="movements-table">
-        <thead>
-          <tr>
-            <th>Документ</th>
-            <th>Дата</th>
-            <th>Рахунок</th>
-            <th>Категорія</th>
-            <th class="num">Сума</th>
-            <th>Записано</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="movements-body">
-          <tr><td colspan="7" class="empty">Завантаження…</td></tr>
-        </tbody>
-      </table>
+  <!-- ==================== TAB 1: LEDGER ==================== -->
+  <div class="tab-pane active" id="tab-ledger">
+    <div class="row">
+      <!-- Create Ledger Posting -->
+      <div class="panel">
+        <h2 data-i18n="ledgerCreateHeading">Create ledger entry</h2>
+        <form id="ledger-post-form">
+          <div class="form-grid">
+            <div class="field" style="grid-column: span 2;">
+              <label data-i18n="documentLabel">Document (recorder)</label>
+              <input name="recorder" id="ledger-recorder" placeholder="capital:1" data-i18n-placeholder="ledgerRecorderPlaceholder" required>
+            </div>
+            <div class="field">
+              <label data-i18n="postingDateLabel">Posting date</label>
+              <input name="period" id="ledger-period" type="date" required>
+            </div>
+            <div class="field">
+              <label data-i18n="currencyLabel">Currency</label>
+              <select name="currency" id="ledger-currency">
+                <option value="USD" selected>USD</option>
+                <option value="EUR">EUR</option>
+                <option value="UAH">UAH</option>
+              </select>
+            </div>
+            <div class="field">
+              <label data-i18n="debitAccountLabel">Debit account (Dr)</label>
+              <select name="account_dr" id="ledger-account-dr" required></select>
+            </div>
+            <div class="field">
+              <label data-i18n="debitSubcontoLabel">Debit subconto (JSON / text)</label>
+              <input name="subconto_dr" id="ledger-subconto-dr" value='{"bank": "Main Bank"}' placeholder='{"bank": "Main Bank"}' data-i18n-placeholder="ledgerSubcontoDrPlaceholder">
+            </div>
+            <div class="field">
+              <label data-i18n="creditAccountLabel">Credit account (Cr)</label>
+              <select name="account_cr" id="ledger-account-cr" required></select>
+            </div>
+            <div class="field">
+              <label data-i18n="creditSubcontoLabel">Credit subconto (JSON / text)</label>
+              <input name="subconto_cr" id="ledger-subconto-cr" value='{"owner": "Founder"}' placeholder='{"owner": "Founder"}' data-i18n-placeholder="ledgerSubcontoCrPlaceholder">
+            </div>
+            <div class="field" style="grid-column: span 2;">
+              <label data-i18n="transactionAmountLabel">Transaction amount</label>
+              <input name="amount" id="ledger-amount" type="number" step="0.01" placeholder="100000.00" data-i18n-placeholder="ledgerAmountPlaceholder" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-accent-blue" style="width: 100%" data-i18n="ledgerPostButton">Post entry (register_post)</button>
+        </form>
+      </div>
+
+      <!-- Cancel Ledger Posting & Info -->
+      <div class="panel" style="display:flex; flex-direction:column; justify-content:space-between;">
+        <div>
+          <h2 data-i18n="ledgerReverseHeading">Reverse ledger entry</h2>
+          <p style="font-size: 0.85rem; color: var(--muted); margin-bottom: 12px;" data-i18n="ledgerReverseDescription">
+            Reverts balances to their prior state by using accum.register_unpost.
+          </p>
+          <form id="ledger-unpost-form" style="display:flex; gap:10px; align-items:flex-end;">
+            <div class="field" style="flex:1;">
+              <label data-i18n="documentLabel">Document (recorder)</label>
+              <input name="recorder" id="ledger-unpost-recorder" placeholder="capital:1" data-i18n-placeholder="ledgerRecorderPlaceholder" required>
+            </div>
+            <button type="submit" class="btn btn-danger" style="padding:10px 16px; font-size:.88rem;" data-i18n="reverseButton">Reverse</button>
+          </form>
+        </div>
+        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px dashed var(--border);">
+          <h3 style="font-size: 0.9rem; margin-bottom: 8px;" data-i18n="accountTypeGuide">Account type guide</h3>
+          <ul style="font-size: 0.82rem; line-height: 1.5; color: var(--muted); padding-left: 18px; list-style-type: disc;">
+            <li><span class="acc-badge acc-active" data-i18n="activeAccountsBadge">Active (1xx/2xx/9xx)</span>: <span data-i18n="activeAccountsDescription">Increase on Debit, decrease on Credit.</span></li>
+            <li><span class="acc-badge acc-passive" data-i18n="passiveAccountsBadge">Passive (4xx/5xx/7xx)</span>: <span data-i18n="passiveAccountsDescription">Increase on Credit, decrease on Debit.</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trial Balance (Оборотно-сальдова відомість) -->
+    <div class="panel" style="margin-top: 24px;">
+      <h2 data-i18n="trialBalanceHeading">Trial Balance</h2>
+      <div style="overflow-x:auto;">
+        <table id="trial-balance-table">
+          <thead>
+            <tr>
+              <th data-i18n="colAccount">Account</th>
+              <th data-i18n="colType">Type</th>
+              <th data-i18n="colSubconto">Subconto</th>
+              <th class="num" data-i18n="colDebitTurnover">Debit turnover (DR)</th>
+              <th class="num" data-i18n="colCreditTurnover">Credit turnover (CR)</th>
+              <th class="num" data-i18n="colBalance">Balance</th>
+              <th data-i18n="currencyLabel">Currency</th>
+            </tr>
+          </thead>
+          <tbody id="trial-balance-body">
+            <tr><td colspan="7" class="empty" data-i18n="loading">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- General Journal (Журнал Бухгалтерських Проводок) -->
+    <div class="panel" style="margin-top: 24px;">
+      <h2 data-i18n="journalHeading">General Journal</h2>
+      <div style="overflow-x:auto;">
+        <table id="journal-table">
+          <thead>
+            <tr>
+              <th data-i18n="documentColumn">Document</th>
+              <th data-i18n="dateColumn">Date</th>
+              <th data-i18n="debitAccountColumn">Debit account</th>
+              <th data-i18n="debitSubcontoColumn">Debit subconto</th>
+              <th data-i18n="creditAccountColumn">Credit account</th>
+              <th data-i18n="creditSubcontoColumn">Credit subconto</th>
+              <th class="num" data-i18n="amountColumn">Amount</th>
+              <th data-i18n="currencyLabel">Currency</th>
+              <th data-i18n="recordedAtColumn">Recorded at</th>
+              <th data-i18n="actionColumn">Action</th>
+            </tr>
+          </thead>
+          <tbody id="journal-body">
+            <tr><td colspan="10" class="empty" data-i18n="loading">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ==================== TAB 2: FINANCE (EASY TRACKER) ==================== -->
+  <div class="tab-pane" id="tab-finance">
+    <!-- Account balance summary -->
+    <section>
+      <div class="cards" id="account-cards">
+        <div class="balance-card"><div class="label" data-i18n="loading">Loading...</div></div>
+      </div>
+    </section>
+
+    <!-- Post + Query -->
+    <div class="row">
+      <!-- Post transaction -->
+      <div class="panel">
+        <h2 data-i18n="newTransactionHeading">New transaction</h2>
+        <form id="post-form">
+          <div class="form-grid">
+            <div class="field">
+              <label data-i18n="documentLabel">Document (recorder)</label>
+              <input name="recorder" id="recorder" placeholder="payment:101" data-i18n-placeholder="financeRecorderPlaceholder" required>
+            </div>
+            <div class="field">
+              <label data-i18n="dateColumn">Date</label>
+              <input name="period" id="period" type="date" required>
+            </div>
+            <div class="field">
+              <label data-i18n="colAccount">Account</label>
+              <select name="account" id="account" required></select>
+            </div>
+            <div class="field">
+              <label data-i18n="categoryLabel">Category</label>
+              <select name="category" id="category" required></select>
+            </div>
+            <div class="field" style="grid-column: span 2;">
+              <label data-i18n="financeAmountLabel">Amount (positive = income, negative = expense)</label>
+              <input name="amount" id="amount" type="number" step="0.01" placeholder="-1500.00" data-i18n-placeholder="financeAmountPlaceholder" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-accent" data-i18n="postButton">Post</button>
+        </form>
+      </div>
+
+      <!-- Query panel -->
+      <div class="panel">
+        <h2 data-i18n="balanceQueryHeading">Balance as of date</h2>
+        <form id="balance-form">
+          <div class="form-grid">
+            <div class="field">
+              <label data-i18n="colAccount">Account</label>
+              <select id="q-account"></select>
+            </div>
+            <div class="field">
+              <label data-i18n="categoryLabel">Category</label>
+              <select id="q-category"></select>
+            </div>
+            <div class="field" style="grid-column: span 2;">
+              <label data-i18n="asOfDateLabel">As of date (blank = now)</label>
+              <input id="q-date" type="date">
+            </div>
+          </div>
+          <button type="submit" class="btn btn-secondary" style="margin-top:6px;" data-i18n="showBalanceButton">Show balance</button>
+        </form>
+        <div id="query-result"><pre id="query-json"></pre></div>
+
+        <h2 style="margin-top: 20px;" data-i18n="cancelDocumentHeading">Cancel document</h2>
+        <form id="unpost-form" style="display:flex; gap:10px; align-items:flex-end;">
+          <div class="field" style="flex:1;">
+            <label data-i18n="documentLabel">Document (recorder)</label>
+            <input name="recorder" id="unpost-recorder" placeholder="payment:101" data-i18n-placeholder="financeRecorderPlaceholder" required>
+          </div>
+          <button type="submit" class="btn btn-danger" style="padding:7px 16px; font-size:.88rem;" data-i18n="cancelButton">Cancel</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Movements table -->
+    <div class="panel" style="margin-top: 24px;">
+      <h2 data-i18n="recentTransactionsHeading">Recent transactions</h2>
+      <div style="overflow-x:auto;">
+        <table id="movements-table">
+          <thead>
+            <tr>
+              <th data-i18n="documentColumn">Document</th>
+              <th data-i18n="dateColumn">Date</th>
+              <th data-i18n="colAccount">Account</th>
+              <th data-i18n="categoryLabel">Category</th>
+              <th class="num" data-i18n="amountColumn">Amount</th>
+              <th data-i18n="recordedAtColumn">Recorded at</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="movements-body">
+            <tr><td colspan="7" class="empty" data-i18n="loading">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -233,6 +396,258 @@
 <script>
   // ---- Helpers ----
   const $ = (id) => document.getElementById(id);
+  const TEXT = {
+    en: {
+      pageTitle: 'pg_accumulator — Finance and Ledger Tracker',
+      subtitle: 'High-performance PostgreSQL extension for aggregation and financial bookkeeping',
+      registeredRegisters: 'Registered registers:',
+      loading: 'Loading...',
+      loadingLower: 'loading...',
+      tabLedger: 'Ledger',
+      tabFinance: 'Finance Tracker',
+      ledgerCreateHeading: 'Create ledger entry',
+      documentLabel: 'Document (recorder)',
+      postingDateLabel: 'Posting date',
+      currencyLabel: 'Currency',
+      debitAccountLabel: 'Debit account (Dr)',
+      debitSubcontoLabel: 'Debit subconto (JSON / text)',
+      creditAccountLabel: 'Credit account (Cr)',
+      creditSubcontoLabel: 'Credit subconto (JSON / text)',
+      transactionAmountLabel: 'Transaction amount',
+      ledgerPostButton: 'Post entry (register_post)',
+      ledgerReverseHeading: 'Reverse ledger entry',
+      ledgerReverseDescription: 'Reverts balances to their prior state by using accum.register_unpost.',
+      reverseButton: 'Reverse',
+      accountTypeGuide: 'Account type guide:',
+      activeAccountsBadge: 'Active (1xx/2xx/9xx)',
+      activeAccountsDescription: 'Increase on Debit, decrease on Credit.',
+      passiveAccountsBadge: 'Passive (4xx/5xx/7xx)',
+      passiveAccountsDescription: 'Increase on Credit, decrease on Debit.',
+      trialBalanceHeading: 'Trial Balance',
+      colAccount: 'Account',
+      colType: 'Type',
+      colSubconto: 'Subconto',
+      colDebitTurnover: 'Debit turnover (DR)',
+      colCreditTurnover: 'Credit turnover (CR)',
+      colBalance: 'Balance',
+      journalHeading: 'General Journal',
+      documentColumn: 'Document',
+      dateColumn: 'Date',
+      debitAccountColumn: 'Debit account',
+      debitSubcontoColumn: 'Debit subconto',
+      creditAccountColumn: 'Credit account',
+      creditSubcontoColumn: 'Credit subconto',
+      amountColumn: 'Amount',
+      recordedAtColumn: 'Recorded at',
+      actionColumn: 'Action',
+      newTransactionHeading: 'New transaction',
+      categoryLabel: 'Category',
+      financeAmountLabel: 'Amount (positive = income, negative = expense)',
+      postButton: 'Post',
+      balanceQueryHeading: 'Balance as of date',
+      asOfDateLabel: 'As of date (blank = now)',
+      showBalanceButton: 'Show balance',
+      cancelDocumentHeading: 'Cancel document',
+      cancelButton: 'Cancel',
+      recentTransactionsHeading: 'Recent transactions',
+      ledgerSoundOk: '✓ Debit ≡ Credit audit passed',
+      ledgerSoundFail: '⚠ Warning! Debit/Credit mismatch',
+      noLedgerBalances: 'No ledger balances yet. Post the first entries.',
+      activeType: 'Active',
+      passiveType: 'Passive',
+      totalsMatch: '✓ Totals match',
+      totalsMismatch: '⚠ Mismatch detected!',
+      totalTurnover: 'Total turnovers:',
+      totalAssetsRow: 'Total assets:',
+      totalPassivesRow: 'Total liabilities/equity:',
+      emptyJournal: 'No journal entries yet.',
+      ledgerPosted: 'Ledger entry posted successfully ✓',
+      ledgerReversed: 'Ledger entry reversed ✓',
+      ledgerReversedNamed: 'Ledger entry reversed: {recorder} ✓',
+      noFinanceData: 'No data yet',
+      noFinanceTransactions: 'No transactions',
+      financePosted: 'Transaction posted ✓',
+      financeCanceled: 'Document canceled ✓',
+      financeCanceledNamed: 'Canceled: {recorder} ✓',
+      allOption: '— all —',
+      ledgerRecorderPlaceholder: 'capital:1',
+      ledgerSubcontoDrPlaceholder: '{"bank": "Main Bank"}',
+      ledgerSubcontoCrPlaceholder: '{"owner": "Founder"}',
+      ledgerAmountPlaceholder: '100000.00',
+      financeRecorderPlaceholder: 'payment:101',
+      financeAmountPlaceholder: '-1500.00'
+    },
+    uk: {
+      pageTitle: 'pg_accumulator — Фінансовий та Бухгалтерський Трекер',
+      subtitle: 'Потужне розширення PostgreSQL для високопродуктивного агрегування та фінансової бухгалтерії',
+      registeredRegisters: 'Зареєстровані регістри:',
+      loading: 'Завантаження...',
+      loadingLower: 'завантаження...',
+      tabLedger: 'Бухгалтерська книга (Ledger)',
+      tabFinance: 'Простий фінансовий трекер (Balance)',
+      ledgerCreateHeading: 'Нова бухгалтерська проводка (Подвійний запис)',
+      documentLabel: 'Документ (recorder)',
+      postingDateLabel: 'Дата проведення',
+      currencyLabel: 'Валюта',
+      debitAccountLabel: 'Дебет рахунок (Dr)',
+      debitSubcontoLabel: 'Субконто Дебету (JSON / Текст)',
+      creditAccountLabel: 'Кредит рахунок (Cr)',
+      creditSubcontoLabel: 'Субконто Кредиту (JSON / Текст)',
+      transactionAmountLabel: 'Сума операції',
+      ledgerPostButton: 'Провести (register_post)',
+      ledgerReverseHeading: 'Скасувати бухгалтерську операцію',
+      ledgerReverseDescription: 'Повертає задіяні баланси активів та пасивів у попередній стан за методом сторно за допомогою функції accum.register_unpost.',
+      reverseButton: 'Сторнувати',
+      accountTypeGuide: 'Довідник типів рахунків:',
+      activeAccountsBadge: 'Активні (1xx/2xx/9xx)',
+      activeAccountsDescription: 'Зростають за Дебетом, зменшуються за Кредитом.',
+      passiveAccountsBadge: 'Пасивні (4xx/5xx/7xx)',
+      passiveAccountsDescription: 'Зростають за Кредитом, зменшуються за Дебетом.',
+      trialBalanceHeading: 'Оборотно-сальдова відомість (Trial Balance)',
+      colAccount: 'Рахунок',
+      colType: 'Тип',
+      colSubconto: 'Аналітика (Субконто)',
+      colDebitTurnover: 'Обороти Дебет (DR)',
+      colCreditTurnover: 'Обороти Кредит (CR)',
+      colBalance: 'Сальдо / Кінцевий баланс',
+      journalHeading: 'Журнал бухгалтерських проводок (General Journal)',
+      documentColumn: 'Документ',
+      dateColumn: 'Дата',
+      debitAccountColumn: 'Дебет рахунок',
+      debitSubcontoColumn: 'Субконто дебету',
+      creditAccountColumn: 'Кредит рахунок',
+      creditSubcontoColumn: 'Субконто кредиту',
+      amountColumn: 'Сума',
+      recordedAtColumn: 'Записано',
+      actionColumn: 'Дія',
+      newTransactionHeading: 'Нова транзакція',
+      categoryLabel: 'Категорія',
+      financeAmountLabel: 'Сума (позитивна = дохід, від\'ємна = витрата)',
+      postButton: 'Провести',
+      balanceQueryHeading: 'Запит залишку на дату',
+      asOfDateLabel: 'На дату (порожньо = зараз)',
+      showBalanceButton: 'Показати залишок',
+      cancelDocumentHeading: 'Скасувати документ',
+      cancelButton: 'Скасувати',
+      recentTransactionsHeading: 'Останні транзакції',
+      ledgerSoundOk: '✓ Баланс Дебет ≡ Кредит Збігається',
+      ledgerSoundFail: '⚠ Помилка! Розходження Дебет/Кредит',
+      noLedgerBalances: 'Немає бухгалтерських сальдо. Проведіть перші проводки.',
+      activeType: 'Активний',
+      passiveType: 'Пасивний',
+      totalsMatch: '✓ Обороти збігаються',
+      totalsMismatch: '⚠ Помилка розбіжності!',
+      totalTurnover: 'Разом оборотів (Транзакційні суми):',
+      totalAssetsRow: 'Усього Активів:',
+      totalPassivesRow: 'Усього Пасивів:',
+      emptyJournal: 'Журнал проводок порожній.',
+      ledgerPosted: 'Бухгалтерську проводку успішно записано ✓',
+      ledgerReversed: 'Проводку скасовано ✓',
+      ledgerReversedNamed: 'Скасовано проводку: {recorder} ✓',
+      noFinanceData: 'Немає даних',
+      noFinanceTransactions: 'Немає транзакцій',
+      financePosted: 'Транзакцію проведено ✓',
+      financeCanceled: 'Документ скасовано ✓',
+      financeCanceledNamed: 'Скасовано: {recorder} ✓',
+      allOption: '— всі —',
+      ledgerRecorderPlaceholder: 'capital:1',
+      ledgerSubcontoDrPlaceholder: '{"bank": "Головний банк"}',
+      ledgerSubcontoCrPlaceholder: '{"owner": "Засновник"}',
+      ledgerAmountPlaceholder: '100000.00',
+      financeRecorderPlaceholder: 'payment:101',
+      financeAmountPlaceholder: '-1500.00'
+    }
+  };
+
+  const FINANCE_ACCOUNTS = {
+    1: { en: 'Cash', uk: 'Готівка' },
+    2: { en: 'Bank account', uk: 'Банківський рахунок' },
+    3: { en: 'Credit card', uk: 'Кредитна картка' }
+  };
+
+  const FINANCE_CATEGORIES = {
+    1: { en: 'Salary', uk: 'Зарплата' },
+    2: { en: 'Food', uk: 'Їжа' },
+    3: { en: 'Transport', uk: 'Транспорт' },
+    4: { en: 'Utilities', uk: 'Комунальні' },
+    5: { en: 'Entertainment', uk: 'Розваги' },
+    6: { en: 'Other', uk: 'Інше' }
+  };
+
+  const LEDGER_ACCOUNTS = {
+    '10': { en: '10 Cash and Accounts', uk: '10 Готівка та Рахунки' },
+    '28': { en: '28 Inventory', uk: '28 Товари (Склад)' },
+    '90': { en: '90 Rent Expense', uk: '90 Витрати на оренду' },
+    '40': { en: '40 Share Capital', uk: '40 Статутний капітал' },
+    '50': { en: '50 Bank Loans', uk: '50 Кредити банку' }
+  };
+
+  let currentLang = localStorage.getItem('pg_accumulator_demo_lang') || 'en';
+  let activeTab = 'ledger';
+
+  function t(key) {
+    return TEXT[currentLang]?.[key] ?? TEXT.en[key] ?? key;
+  }
+
+  function currentLocale() {
+    return currentLang === 'uk' ? 'uk-UA' : 'en-US';
+  }
+
+  function localizeLabel(map, key) {
+    return map[key]?.[currentLang] ?? map[key]?.en ?? String(key);
+  }
+
+  function localizeTemplate(key, values = {}) {
+    return Object.entries(values).reduce(
+      (result, [name, value]) => result.replace(`{${name}}`, value),
+      t(key)
+    );
+  }
+
+  function renderSelect(selectId, items, includeAll = false) {
+    const select = $(selectId);
+    const currentValue = select.value;
+    let html = '';
+    if (includeAll) {
+      html += `<option value="">${t('allOption')}</option>`;
+    }
+    html += Object.entries(items)
+      .map(([value, labels]) => `<option value="${value}">${labels[currentLang] ?? labels.en}</option>`)
+      .join('');
+    select.innerHTML = html;
+    if ([...select.options].some((option) => option.value === currentValue)) {
+      select.value = currentValue;
+    }
+  }
+
+  function applyTranslations() {
+    document.documentElement.lang = currentLang;
+    document.title = t('pageTitle');
+    $('lang-en').classList.toggle('active', currentLang === 'en');
+    $('lang-uk').classList.toggle('active', currentLang === 'uk');
+
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      el.textContent = t(el.dataset.i18n);
+    });
+
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+      el.placeholder = t(el.dataset.i18nPlaceholder);
+    });
+
+    renderSelect('ledger-account-dr', LEDGER_ACCOUNTS);
+    renderSelect('ledger-account-cr', LEDGER_ACCOUNTS);
+    renderSelect('account', FINANCE_ACCOUNTS);
+    renderSelect('category', FINANCE_CATEGORIES);
+    renderSelect('q-account', FINANCE_ACCOUNTS, true);
+    renderSelect('q-category', FINANCE_CATEGORIES, true);
+  }
+
+  function setLanguage(lang) {
+    currentLang = lang === 'uk' ? 'uk' : 'en';
+    localStorage.setItem('pg_accumulator_demo_lang', currentLang);
+    applyTranslations();
+    switchTab(activeTab);
+  }
 
   function toast(msg, isErr = false) {
     const el = $('toast');
@@ -254,27 +669,236 @@
 
   function fmt(n) {
     const v = parseFloat(n);
-    return v.toLocaleString('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return v.toLocaleString(currentLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  // ---- Set default date to today ----
+  // ---- Set default dates to today ----
   const today = new Date().toISOString().slice(0, 10);
   $('period').value = today;
+  $('ledger-period').value = today;
 
-  // ---- Load account balances ----
+  // ---- Auto ID suggest based on records ----
+  let ledgerMovementsCount = 0;
+  function updateLedgerRecorderName() {
+    $('ledger-recorder').value = 'ledger:' + (ledgerMovementsCount + 1);
+  }
+
+  // ---- Tab System ----
+  function switchTab(tab) {
+    activeTab = tab;
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+    
+    if (tab === 'ledger') {
+      $('btn-tab-ledger').classList.add('active');
+      $('tab-ledger').classList.add('active');
+      loadLedger();
+    } else {
+      $('btn-tab-finance').classList.add('active');
+      $('tab-finance').classList.add('active');
+      loadFinance();
+    }
+  }
+
+  // ---- Load General System Info ----
+  async function loadSystemInfo() {
+    try {
+      // 1. Registers
+      const registers = await api('GET', '/api/registers');
+      $('registered-registers-list').innerHTML = registers
+        .map(r => `<code>${r.name}</code> (${r.kind})`)
+        .join(', ');
+
+      // 2. Ledger Soundness
+      const verify = await api('GET', '/api/ledger/verify');
+      const badge = $('ledger-soundness-badge');
+      if (verify.sound) {
+        badge.textContent = t('ledgerSoundOk');
+        badge.className = 'badge sound';
+      } else {
+        badge.textContent = t('ledgerSoundFail');
+        badge.className = 'badge warning';
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  // ---- TAB 1: LEDGER CODE ----
+  async function loadLedger() {
+    loadSystemInfo();
+    loadTrialBalance();
+    loadLedgerJournal();
+  }
+
+  async function loadTrialBalance() {
+    try {
+      const data = await api('GET', '/api/ledger/balances');
+      const tbody = $('trial-balance-body');
+      if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty">${t('noLedgerBalances')}</td></tr>`;
+        return;
+      }
+
+      let totalDr = 0;
+      let totalCr = 0;
+      let totalAssets = 0;
+      let totalPassives = 0;
+
+      let html = data.map(r => {
+        const amountDr = parseFloat(r.amount_dr);
+        const amountCr = parseFloat(r.amount_cr);
+        const balance = parseFloat(r.balance);
+        
+        totalDr += amountDr;
+        totalCr += amountCr;
+
+        if (r.acc_type === 'A') {
+          totalAssets += balance;
+        } else {
+          totalPassives += balance;
+        }
+
+        const typeLabel = r.acc_type === 'A' ? t('activeType') : t('passiveType');
+        const typeCls = r.acc_type === 'A' ? 'acc-active' : 'acc-passive';
+
+        return `<tr>
+          <td><strong>${r.account}</strong></td>
+          <td><span class="acc-badge ${typeCls}">${typeLabel}</span></td>
+          <td><span class="subconto-box">${JSON.stringify(r.subconto)}</span></td>
+          <td class="num">${fmt(r.amount_dr)}</td>
+          <td class="num">${fmt(r.amount_cr)}</td>
+          <td class="num" style="font-weight: bold;">${fmt(r.balance)}</td>
+          <td>${r.currency || 'USD'}</td>
+        </tr>`;
+      }).join('');
+
+      // Add Total rows
+      const totalsMatch = Math.abs(totalDr - totalCr) < 0.001 
+        ? `<span style="color:var(--positive)">${t('totalsMatch')}</span>` 
+        : `<span style="color:var(--negative)">${t('totalsMismatch')}</span>`;
+
+      html += `<tr class="total-row">
+        <td colspan="3">${t('totalTurnover')}</td>
+        <td class="num">${fmt(totalDr)}</td>
+        <td class="num">${fmt(totalCr)}</td>
+        <td colspan="2" style="text-align: center; font-weight: bold;">${totalsMatch}</td>
+      </tr>`;
+
+      html += `<tr class="total-row" style="background-color: #d4edda !important;">
+        <td colspan="3">${t('totalAssetsRow')}</td>
+        <td colspan="2" class="num" style="text-align: left;"><strong>${t('totalAssetsRow')}</strong> ${fmt(totalAssets)} USD</td>
+        <td colspan="2" class="num" style="text-align: left;"><strong>${t('totalPassivesRow')}</strong> ${fmt(totalPassives)} USD</td>
+      </tr>`;
+
+      tbody.innerHTML = html;
+    } catch (e) {
+      $('trial-balance-body').innerHTML = `<tr><td colspan="7" class="empty" style="color:var(--negative)">${e.message}</td></tr>`;
+    }
+  }
+
+  async function loadLedgerJournal() {
+    try {
+      const data = await api('GET', '/api/ledger/movements');
+      ledgerMovementsCount = data.length;
+      updateLedgerRecorderName();
+
+      const tbody = $('journal-body');
+      if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="10" class="empty">${t('emptyJournal')}</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = data.map(r => {
+        const time = r.recorded_at ? new Date(r.recorded_at).toLocaleTimeString(currentLocale()) : '';
+        return `<tr>
+          <td><code>${r.recorder}</code></td>
+          <td>${r.period ?? ''}</td>
+          <td><span class="acc-badge acc-active">Dr ${r.account_dr}</span></td>
+          <td><span class="subconto-box">${JSON.stringify(r.subconto_dr)}</span></td>
+          <td><span class="acc-badge acc-passive">Cr ${r.account_cr}</span></td>
+          <td><span class="subconto-box">${JSON.stringify(r.subconto_cr)}</span></td>
+          <td class="num positive">${fmt(r.amount)}</td>
+          <td><strong>${r.currency || 'USD'}</strong></td>
+          <td style="color:var(--muted);font-size:.8rem;">${time}</td>
+          <td><button class="btn btn-danger" style="padding: 2px 8px; font-size: 0.75rem;" onclick="unpostLedgerRecorder('${r.recorder}')">✕</button></td>
+        </tr>`;
+      }).join('');
+    } catch (e) {
+      $('journal-body').innerHTML = `<tr><td colspan="10" class="empty" style="color:var(--negative)">${e.message}</td></tr>`;
+    }
+  }
+
+  // Post Ledger entry form
+  $('ledger-post-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('POST', '/api/ledger/post', {
+        recorder: $('ledger-recorder').value.trim(),
+        period:   $('ledger-period').value,
+        currency: $('ledger-currency').value,
+        account_dr: $('ledger-account-dr').value,
+        subconto_dr: $('ledger-subconto-dr').value,
+        account_cr: $('ledger-account-cr').value,
+        subconto_cr: $('ledger-subconto-cr').value,
+        amount:   Number($('ledger-amount').value),
+      });
+      toast(t('ledgerPosted'));
+      e.target.reset();
+      $('ledger-period').value = today;
+      loadLedger();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // Unpost Ledger entry form
+  $('ledger-unpost-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('POST', '/api/unpost', { 
+        register: 'general_ledger',
+        recorder: $('ledger-unpost-recorder').value.trim() 
+      });
+      toast(t('ledgerReversed'));
+      $('ledger-unpost-recorder').value = '';
+      loadLedger();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  async function unpostLedgerRecorder(recorder) {
+    try {
+      await api('POST', '/api/unpost', { register: 'general_ledger', recorder });
+      toast(localizeTemplate('ledgerReversedNamed', { recorder }));
+      loadLedger();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+
+  // ---- TAB 2: FINANCE (EASY TRACKER) CODE ----
+  async function loadFinance() {
+    loadSystemInfo();
+    loadBalances();
+    loadMovements();
+  }
+
   async function loadBalances() {
     try {
       const data = await api('GET', '/api/balances');
       const container = $('account-cards');
       if (!data.length) {
-        container.innerHTML = '<div class="balance-card"><div class="label">Немає даних</div></div>';
+        container.innerHTML = `<div class="balance-card"><div class="label">${t('noFinanceData')}</div></div>`;
         return;
       }
       container.innerHTML = data.map(r => {
         const v = parseFloat(r.total);
         const cls = v < 0 ? 'neg' : 'pos';
         return `<div class="balance-card">
-          <div class="label">${r.account_name}</div>
+          <div class="label">${localizeLabel(FINANCE_ACCOUNTS, r.account)}</div>
           <div class="value ${cls}">${fmt(r.total)} ₴</div>
         </div>`;
       }).join('');
@@ -283,27 +907,26 @@
     }
   }
 
-  // ---- Load movements ----
   async function loadMovements() {
     try {
       const data = await api('GET', '/api/movements');
       const tbody = $('movements-body');
       if (!data.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">Немає транзакцій</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="7" class="empty">${t('noFinanceTransactions')}</td></tr>`;
         return;
       }
       tbody.innerHTML = data.map(r => {
         const v = parseFloat(r.amount);
         const cls = v < 0 ? 'neg' : 'pos';
-        const time = r.recorded_at ? new Date(r.recorded_at).toLocaleTimeString('uk-UA') : '';
+        const time = r.recorded_at ? new Date(r.recorded_at).toLocaleTimeString(currentLocale()) : '';
         return `<tr>
           <td>${r.recorder}</td>
           <td>${r.period ?? ''}</td>
-          <td>${r.account_name}</td>
-          <td>${r.category_name}</td>
+          <td>${localizeLabel(FINANCE_ACCOUNTS, r.account)}</td>
+          <td>${localizeLabel(FINANCE_CATEGORIES, r.category)}</td>
           <td class="num ${cls}">${fmt(r.amount)} ₴</td>
           <td style="color:var(--muted);font-size:.8rem;">${time}</td>
-          <td><button class="btn btn-danger" onclick="unpostRecorder('${r.recorder}')">✕</button></td>
+          <td><button class="btn btn-danger" style="padding: 2px 8px; font-size: 0.75rem;" onclick="unpostFinanceRecorder('${r.recorder}')">✕</button></td>
         </tr>`;
       }).join('');
     } catch (e) {
@@ -311,12 +934,7 @@
     }
   }
 
-  function refresh() {
-    loadBalances();
-    loadMovements();
-  }
-
-  // ---- Post form ----
+  // Post form
   $('post-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
@@ -327,39 +945,39 @@
         category: Number($('category').value),
         amount:   Number($('amount').value),
       });
-      toast('Транзакцію проведено ✓');
+      toast(t('financePosted'));
       e.target.reset();
       $('period').value = today;
-      refresh();
+      loadFinance();
     } catch (err) {
       toast(err.message, true);
     }
   });
 
-  // ---- Unpost form ----
+  // Unpost form
   $('unpost-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
-      await api('POST', '/api/unpost', { recorder: $('unpost-recorder').value.trim() });
-      toast('Документ скасовано ✓');
+      await api('POST', '/api/unpost', { register: 'finance', recorder: $('unpost-recorder').value.trim() });
+      toast(t('financeCanceled'));
       $('unpost-recorder').value = '';
-      refresh();
+      loadFinance();
     } catch (err) {
       toast(err.message, true);
     }
   });
 
-  async function unpostRecorder(recorder) {
+  async function unpostFinanceRecorder(recorder) {
     try {
-      await api('POST', '/api/unpost', { recorder });
-      toast(`Скасовано: ${recorder} ✓`);
-      refresh();
+      await api('POST', '/api/unpost', { register: 'finance', recorder });
+      toast(localizeTemplate('financeCanceledNamed', { recorder }));
+      loadFinance();
     } catch (err) {
       toast(err.message, true);
     }
   }
 
-  // ---- Balance query form ----
+  // Balance query form
   $('balance-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const params = new URLSearchParams();
@@ -380,7 +998,8 @@
   });
 
   // ---- Initial load ----
-  refresh();
+  applyTranslations();
+  switchTab('ledger');
 </script>
 </body>
 </html>

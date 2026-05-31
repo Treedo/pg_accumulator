@@ -31,7 +31,7 @@ cd demo/sqlalchemy
 docker compose up --build
 ```
 
-Open **http://localhost:5002** in your browser.
+Open **http://localhost:3304** in your browser.
 
 ## What You'll See
 
@@ -62,6 +62,12 @@ with Session(engine) as session:
 
     session.commit()  # atomic — both or neither
 ```
+
+### Bookkeeping (Ledger) Tab
+Demonstrates the **double-entry ledger register** (`kind: 'ledger'`). Record balanced bookkeeping transactions, view a real-time **Trial Balance** dashboard with Debit/Credit turnovers and account balances (calculated dynamically according to Active / Passive account types), and view the **General Journal** of all movements:
+
+- **Debit ≡ Credit Audit**: The dashboard runs a built-in automated soundness verification via `accum.register_ledger_verify('general_ledger')` to ensure double-entry logic holds true across all resource dimensions.
+- **Dynamic Subconto (JSONB)**: Shows how arbitrary dimensions like custom analytic profiles (Subconto) are automatically hashed on-write and unpacked on-read in real time.
 
 ### Catalog Tab (Pure ORM)
 Manage Warehouses, Products, and Clients with standard SQLAlchemy ORM models.

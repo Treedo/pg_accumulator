@@ -19,3 +19,9 @@
 /packages/sqlalchemy-accumulator/*.egg-info/
 /packages/sqlalchemy-accumulator/build/
 /packages/sqlalchemy-accumulator/dist/
+
+# prisma demo artifacts
+/demo/prisma/node_modules/
+/packages/prisma-accumulator/node_modules/
+/packages/prisma-accumulator/dist/
+

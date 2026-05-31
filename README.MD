@@ -151,6 +151,17 @@ Balance reads in high-write mode automatically include pending (unmerged) deltas
 
 **Tested in:** [test/sql/16_high_write_mode.sql](test/sql/16_high_write_mode.sql)
 
+### Ledger (Double-Entry Register)
+
+A **ledger register** is a double-entry financial accounting system where each movement atomically records a balanced transaction between two accounts (Debit and Credit) in a single row. This layout inherently enforces the double-entry accounting identity:
+$$\text{Total Debit} \equiv \text{Total Credit}$$
+
+A single-line movement specifies `account_dr`, `account_cr`, `amount`, and nested analytic sub-data (Subconto) via the `jsonb` fields `subconto_dr` and `subconto_cr`. Behind the scenes, triggers split the movement, hashing the sub-data with xxhash64/md5 to update the unified balance cache in $O(1)$ time.
+
+For an extensive architectural guide, see [docs/ledger_register.md](docs/ledger_register.md) and the development roadmap in [docs/ledger_plan.md](docs/ledger_plan.md).
+
+**Tested in:** [test/sql/23_ledger_register.sql](test/sql/23_ledger_register.sql)
+
 ---
 
 ## Quick Start
@@ -567,10 +578,11 @@ Interactive demo applications are available for different technology stacks:
 | **SQLAlchemy** | Flask + SQLAlchemy + sqlalchemy-accumulator | `localhost:3304` | `5437` | [demo/sqlalchemy/README.md](demo/sqlalchemy/README.md) |
 
 Each demo demonstrates:
-- Register creation and initialization
+- Register creation and initialization (supporting both standard `balance` and double-entry `ledger` register types)
 - Posting movements (`register_post`)
-- Canceling documents (`register_unpost`)
-- Real-time balance display from `balance_cache`
+- Canceling documents / Storno (`register_unpost`)
+- Real-time balance display from `balance_cache` (including asset/liability trial balance OSV calculations for ledgers)
+- Integrity soundness auditing (`register_ledger_verify` for checking Debit ≡ Credit equation balance)
 - Historical balance queries (`_balance()` with `at_date`)
 - Movement history browsing
 
@@ -619,7 +631,7 @@ See the [concept document](packages/prisma-accumulator/CONCEPT.md) for the archi
 
 ## Testing
 
-The test suite comprises **22 pgTAP test files** covering every aspect of the system. All tests pass on the current release.
+The test suite comprises **23 pgTAP test files** covering every aspect of the system. All tests pass on the current release.
 
 ```bash
 # Run the full test suite
@@ -653,6 +665,7 @@ docker compose -f docker/docker-compose.test.yml up \
 | Maintenance | [20_maintenance.sql](test/sql/20_maintenance.sql) | verify, rebuild_totals, rebuild_cache |
 | Background worker | [21_bgworker.sql](test/sql/21_bgworker.sql) | Worker registration and lifecycle |
 | Full consistency | [22_consistency.sql](test/sql/22_consistency.sql) | Comprehensive aggregation chain validation |
+| Double-entry ledger | [23_ledger_register.sql](test/sql/23_ledger_register.sql) | Ledger kind setup, subconto hashing, active/passive rule validation & retroactive posting |
 
 ---
 
